@@ -1,0 +1,44 @@
+# SCEPTRE — Windows 11 / NVIDIA RTX 5060 (Blackwell, sm_120)
+#
+# ---------------------------------------------------------------------------
+# READ FIRST — PyTorch must be a CUDA 12.8+ build.
+# ---------------------------------------------------------------------------
+# RTX 50-series GPUs are compute capability sm_120. A cu126 (or earlier) wheel
+# reports torch.cuda.is_available() == True and then fails at the first kernel
+# launch with:
+#     CUDA error: no kernel image is available for execution on the device
+#
+# Install torch SEPARATELY and FIRST, from the cu128 index:
+#
+#     pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128
+#
+# Verify before doing anything else:
+#
+#     python -c "import torch; print(torch.__version__, torch.cuda.get_arch_list())"
+#
+# 'sm_120' must appear in the arch list. Cell 1 of SCEPTRE.ipynb enforces this.
+# ---------------------------------------------------------------------------
+
+# --- core numerics -----------------------------------------------------
+numpy>=2.0
+scipy>=1.13
+pandas>=2.2
+
+# --- power system ------------------------------------------------------
+pandapower>=3.0          # IEEE case14/30/57/118 + Newton-Raphson AC power flow
+numba>=0.60              # optional, but gives pandapower a large speed-up
+networkx>=3.3            # graph diameter, hop matrix, layout
+
+# --- machine learning --------------------------------------------------
+scikit-learn>=1.5
+# torch                  installed separately from the cu128 index -- see above
+
+# --- figures and notebook ---------------------------------------------
+matplotlib>=3.9
+jupyterlab>=4.2
+ipykernel>=6.29
+
+# --- not required ------------------------------------------------------
+# No mamba-ssm, no causal-conv1d, no CUDA compilation, no cvxpy.
+# The selective state-space baseline is implemented directly in PyTorch and the
+# CBF filter is solved in closed form, so there is no build step anywhere.

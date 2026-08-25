@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------------------
+#  SCEPTRE — what does not belong in the repository
+# ---------------------------------------------------------------------------
+#  Rule of thumb: if `SCEPTRE.ipynb` can regenerate it, it is not tracked.
+#  The notebook is the source of truth; everything else is output.
+
+# --- regenerable artefacts, and far too large for git ----------------------
+# 321 MB of trained weights. The notebook rebuilds them, and resumes from them
+# locally if present. Never commit these: GitHub rejects files over 100 MB and
+# a repo full of checkpoints is unusable to clone.
+checkpoints/
+
+# 64 MB of generated telemetry. Part 5 regenerates it deterministically from
+# GLOBAL_SEED, so shipping it would only guarantee it goes stale.
+dataset/
+
+# --- the archived predecessor project --------------------------------------
+# 50 MB, and it is a trap: it contains its own runnable notebook that writes
+# figures into ../figures/ under DIFFERENT names, which has twice been mistaken
+# for a SCEPTRE run. Kept on disk for provenance, kept out of the repository.
+lfc_fdi_replication/
+
+# --- run logs and scratch ---------------------------------------------------
+*.log
+*.err
+_*.py
+_*.log
+nb/
+
+# --- python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+nlpenv/
+
+# --- notebooks --------------------------------------------------------------
+.ipynb_checkpoints/
+# Committed WITHOUT outputs, so diffs stay readable. Strip before committing:
+#   jupyter nbconvert --clear-output --inplace SCEPTRE.ipynb
+
+# --- editors / OS -----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

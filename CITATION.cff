@@ -1,0 +1,84 @@
+cff-version: 1.2.0
+title: >-
+  SCEPTRE: Separator-tree Conformal Estimation for Provable
+  Tamper-Resilient Elimination
+message: If you use this software or the SSC dataset, please cite it.
+type: software
+authors:
+  - name: SCEPTRE authors
+repository-code: https://github.com/USERNAME/sceptre
+license: MIT
+version: 1.0.0
+date-released: '2026-08-24'
+keywords:
+  - false data injection
+  - load frequency control
+  - power system security
+  - conformal prediction
+  - control barrier function
+  - nested dissection
+  - graph neural networks
+abstract: >-
+  A stealthy false-data injection attack constructed as a = Hc leaves the
+  weighted-least-squares residual exactly unchanged, so the chi-square bad-data
+  test detects none of them at any severity. SCEPTRE replaces message passing
+  with a recursive encoder over the power network's own nested-dissection
+  separator tree. Its parameter tensors are independent of the bus count, so a
+  model trained on IEEE 14-bus transfers zero-shot to IEEE 118-bus with identical
+  weights. Attack localization descends the same tree using split-conformal
+  p-values with Benjamini-Hochberg control within each sibling family, giving
+  O(k log N) node evaluations rather than the O(N) per-bus scan. The accompanying
+  SSC dataset ships a per-sample physics certificate recording stealth, attacker
+  cost and attacker model error, so results can be re-stratified without
+  regenerating the data.
+references:
+  - type: article
+    authors:
+      - family-names: Liu
+        given-names: Yao
+      - family-names: Ning
+        given-names: Peng
+      - family-names: Reiter
+        given-names: Michael K.
+    title: >-
+      False Data Injection Attacks Against State Estimation in Electric Power
+      Grids
+    journal: ACM Transactions on Information and System Security
+    volume: 14
+    issue: 1
+    year: 2011
+  - type: article
+    authors:
+      - family-names: Boyaci
+        given-names: Osman
+      - family-names: Narimani
+        given-names: Mohammad Rasoul
+      - family-names: Davis
+        given-names: Katherine R.
+      - family-names: Ismail
+        given-names: Muhammad
+      - family-names: Overbye
+        given-names: Thomas J.
+      - family-names: Serpedin
+        given-names: Erchin
+    title: >-
+      Joint Detection and Localization of Stealth False Data Injection Attacks
+      in Smart Grids Using Graph Neural Networks
+    journal: IEEE Transactions on Smart Grid
+    volume: 13
+    issue: 1
+    start: 807
+    end: 819
+    year: 2022
+    doi: 10.1109/TSG.2021.3117977
+  - type: generic
+    authors:
+      - family-names: George
+        given-names: Alan
+    title: Nested Dissection of a Regular Finite Element Mesh
+    journal: SIAM Journal on Numerical Analysis
+    volume: 10
+    issue: 2
+    start: 345
+    end: 363
+    year: 1973
