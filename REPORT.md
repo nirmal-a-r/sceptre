@@ -564,20 +564,20 @@ All numbers below are produced by one run of `SCEPTRE.ipynb` at budget `full` (d
 
 | Model | Detection F1 | AUC | Localization F1 | Repair RMSE | Params |
 |---|---|---|---|---|---|
-| ST-Transformer | 0.6681 ± 0.0019 | 0.5705 | 0.5710 ± 0.0010 | 0.1319 | 1,380,871 |
-| Graphormer | 0.6676 ± 0.0029 | 0.5947 | 0.5702 ± 0.0033 | 0.1332 | 1,380,891 |
-| BiLSTM | 0.6674 ± 0.0032 | 0.5770 | 0.5700 ± 0.0018 | 0.1550 | 935,623 |
-| KAN | 0.6664 ± 0.0006 | 0.5718 | 0.5701 ± 0.0008 | 0.2078 | 1,592,071 |
-| MLP (no topology) | 0.6662 ± 0.0014 | 0.6054 | 0.5684 ± 0.0005 | 0.2429 | 935,047 |
-| MSA3E *(base paper)* | 0.6659 ± 0.0040 | 0.5816 | 0.5693 ± 0.0028 | 0.1318 | 1,380,871 |
-| **SCEPTRE (RSTE)** | 0.6651 ± 0.0037 | 0.5769 | 0.5692 ± 0.0012 | 0.1747 | 1,447,111 |
-| GCN | 0.6645 ± 0.0020 | 0.5830 | 0.5691 ± 0.0007 | 0.2215 | 929,671 |
-| S4 / Mamba-lite | 0.6638 ± 0.0020 | 0.5704 | 0.5675 ± 0.0007 | 0.1679 | 977,095 |
-| GAT | 0.6633 ± 0.0006 | 0.5698 | 0.5679 ± 0.0004 | 0.1509 | 1,374,343 |
+| MLP (no topology) | 0.9863 ± 0.0027 | 0.9989 | 0.8299 ± 0.0049 | 0.0278 | 935,046 |
+| BiLSTM | 0.9824 ± 0.0022 | 0.9980 | 0.9198 ± 0.0042 | 0.0278 | 935,622 |
+| GCN | 0.9823 ± 0.0041 | 0.9982 | 0.9084 ± 0.0080 | 0.0363 | 929,670 |
+| **SCEPTRE (RSTE)** | 0.9815 ± 0.0077 | 0.9976 | 0.9115 ± 0.0124 | 0.0305 | 1,447,110 |
+| Graphormer | 0.9813 ± 0.0044 | 0.9977 | 0.9160 ± 0.0126 | 0.0375 | 1,380,890 |
+| ST-Transformer | 0.9794 ± 0.0074 | 0.9973 | 0.9154 ± 0.0082 | 0.0370 | 1,380,870 |
+| S4 / Mamba-lite | 0.9786 ± 0.0039 | 0.9977 | 0.8782 ± 0.0036 | 0.0307 | 977,094 |
+| MSA3E *(base paper)* | 0.9735 ± 0.0028 | 0.9946 | 0.9032 ± 0.0123 | 0.0379 | 1,380,870 |
+| GAT | 0.9601 ± 0.0284 | 0.9874 | 0.8883 ± 0.0354 | 0.0317 | 1,374,342 |
+| KAN | 0.9503 ± 0.0208 | 0.9849 | 0.8492 ± 0.0222 | 0.0525 | 1,592,070 |
 
-**SCEPTRE does not top this table.** ST-Transformer leads at 0.6681 against SCEPTRE's 0.6651. This is reported plainly because it is the expected outcome: at N = 14 a 3-layer message-passing stack already reaches ~89 % of the grid, so the receptive-field bottleneck that motivates a separator tree does not bind. The claims that discriminate are in §6.2–§6.4.
+**SCEPTRE does not top this table.** MLP (no topology) leads at 0.9863 against SCEPTRE's 0.9815. This is reported plainly because it is the expected outcome: at N = 14 a 3-layer message-passing stack already reaches ~89 % of the grid, so the receptive-field bottleneck that motivates a separator tree does not bind. The claims that discriminate are in §6.2–§6.4.
 
-Against the base paper's MSA3E specifically, SCEPTRE is behind by 0.0009 F1.
+Against the base paper's MSA3E specifically, SCEPTRE is ahead by 0.0080 F1.
 
 ### 6.2 Stratified evaluation — what the aggregate hides
 
@@ -585,29 +585,29 @@ Decision threshold **frozen** at the full-test value; clean windows included in 
 
 | Model | S4 | S3 | S2 | S1 | S0 |
 |---|---|---|---|---|---|
-| *(attacked windows)* | 21 | 350 | 240 | 482 | 1371 |
-| **SCEPTRE (RSTE)** | — | 0.2226 | 0.1572 | 0.2725 | 0.5268 |
-| GCN | — | 0.2234 | 0.1602 | 0.2844 | 0.5286 |
-| MSA3E *(base paper)* | — | 0.2257 | 0.1653 | 0.2823 | 0.5253 |
-| ST-Transformer | — | 0.2254 | 0.1623 | 0.2837 | 0.5295 |
-| MLP (no topology) | — | 0.2324 | 0.1571 | 0.2927 | 0.5358 |
+| *(attacked windows)* | 31 | 331 | 199 | 679 | 1224 |
+| **SCEPTRE (RSTE)** | 0.7949 | 0.9764 | 0.9330 | 0.9704 | 0.9890 |
+| GCN | 0.7126 | 0.9636 | 0.9333 | 0.9609 | 0.9800 |
+| MSA3E *(base paper)* | 0.8267 | 0.9807 | 0.9347 | 0.9523 | 0.9785 |
+| ST-Transformer | 0.6327 | 0.9484 | 0.8889 | 0.9524 | 0.9748 |
+| MLP (no topology) | 0.6889 | 0.9594 | 0.9190 | 0.9656 | 0.9750 |
 
-Along **severity** (the physics sanity check) SCEPTRE moves from 0.2138 on the smallest attacks to 0.3037 on the largest — a spread of 0.0899 that the aggregate number conceals entirely.
+Along **severity** (the physics sanity check) SCEPTRE moves from 0.9224 on the smallest attacks to 0.9851 on the largest — a spread of 0.0627 that the aggregate number conceals entirely.
 
 ### 6.3 Zero-shot transfer — the categorical result
 
 | Model | case14 (train) | case30 | case57 | case118 | Parameters |
 |---|---|---|---|---|---|
-| ST-Transformer | 0.668 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
-| Graphormer | 0.668 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
-| BiLSTM | 0.667 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
-| KAN | 0.666 | 0.667 | 0.667 | 0.661 | **1,592,071 — unchanged** |
-| MLP (no topology) | 0.666 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
-| MSA3E *(base paper)* | 0.666 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
-| **SCEPTRE (RSTE)** | 0.665 | 0.661 | 0.667 | 0.667 | **1,447,111 — unchanged** |
-| GCN | 0.664 | 0.662 | 0.668 | 0.664 | **929,671 — unchanged** |
-| S4 / Mamba-lite | 0.664 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
-| GAT | 0.663 | 0.667 | 0.667 | 0.667 | **1,374,343 — unchanged** |
+| MLP (no topology) | 0.986 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
+| BiLSTM | 0.982 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
+| GCN | 0.982 | 0.744 | 0.753 | 0.790 | **929,670 — unchanged** |
+| **SCEPTRE (RSTE)** | 0.982 | 0.686 | 0.713 | 0.797 | **1,447,110 — unchanged** |
+| Graphormer | 0.981 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
+| ST-Transformer | 0.979 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
+| S4 / Mamba-lite | 0.979 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
+| MSA3E *(base paper)* | 0.974 | **n/a** | **n/a** | **n/a** | positional table has *N* rows |
+| GAT | 0.960 | 0.702 | 0.742 | 0.702 | **1,374,342 — unchanged** |
+| KAN | 0.950 | 0.685 | 0.667 | 0.682 | **1,592,070 — unchanged** |
 
 **"n/a" is not a poor score — it is an undefined one.** 6 of the 10 architectures, including the base paper's MSA3E, cannot be evaluated at a different bus count at all. That is a categorical capability gap rather than a percentage, and it is the operationally decisive property: a utility does not get to retrain when it energises a new substation.
 
@@ -615,10 +615,10 @@ Along **severity** (the physics sanity check) SCEPTRE moves from 0.2138 on the s
 
 | System | N | HALO probes | Flat probes | Reduction | HALO F1 | Flat F1 | HALO FDR | Flat FDR |
 |---|---|---|---|---|---|---|---|---|
-| case14 | 14 | 3.1 | 14 | **4.5×** | 0.1323 | 0.1235 | 0.409 | 0.422 |
-| case30 | 30 | 3.5 | 30 | **8.5×** | 0.0282 | 0.0256 | 0.811 | 0.822 |
-| case57 | 57 | 6.9 | 57 | **8.3×** | 0.0563 | 0.0357 | 0.713 | 0.774 |
-| case118 | 118 | 17.2 | 118 | **6.9×** | 0.1359 | 0.1528 | 0.661 | 0.710 |
+| case14 | 14 | 14.5 | 14 | **1.0×** | 0.8668 | 0.8677 | 0.231 | 0.229 |
+| case30 | 30 | 19.2 | 30 | **1.6×** | 0.5290 | 0.5310 | 0.481 | 0.483 |
+| case57 | 57 | 5.5 | 57 | **10.4×** | 0.0511 | 0.0924 | 0.617 | 0.686 |
+| case118 | 118 | 1.8 | 118 | **65.4×** | 0.0044 | 0.0185 | 0.836 | 0.855 |
 
 The cost result is established: node evaluations grow logarithmically in `N` where the flat per-bus test is exactly linear. **Both** procedures show a measured FDR above the nominal level, for the exchangeability reason in §4.3 — the comparison between them is sound, the absolute level is not offered as a calibration claim.
 
@@ -628,9 +628,9 @@ Detector threshold set at a 5% false-alarm rate on clean calibration data, so `�
 
 | System | m=0.02 | m=0.05 | m=0.1 | m=0.2 | m=0.35 | m=0.55 | m=0.85 | m=1.3 | m\*(0.05) |
 |---|---|---|---|---|---|---|---|---|---|
-| case14 | 0.845 | 0.843 | 0.838 | 0.828 | 0.833 | 0.802 | 0.828 | 0.790 | — |
-| case30 | 0.925 | 0.922 | 0.922 | 0.922 | 0.925 | 0.935 | 0.932 | 0.945 | — |
-| case118 | 0.973 | 0.975 | 0.968 | 0.970 | 0.955 | 0.950 | 0.917 | 0.910 | — |
+| case14 | 0.993 | 0.983 | 0.910 | 0.485 | 0.158 | 0.062 | 0.072 | 0.043 | 1.300 |
+| case30 | 0.965 | 0.895 | 0.618 | 0.260 | 0.100 | 0.077 | 0.015 | 0.007 | 0.850 |
+| case118 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.998 | 0.995 | — |
 
 The χ² residual test catches **0 %** of `a = Hc` at every severity — the identity `P_⊥H = 0` showing up as a measurement.
 
@@ -663,15 +663,15 @@ Equilibrium gap after one further attacker best-response budget: -0.0668.
 
 | Variant | Detection F1 | Localization F1 | Repair RMSE | ms/batch |
 |---|---|---|---|---|
-| **full SCEPTRE** | 0.6638 ± 0.0020 | 0.5686 ± 0.0005 | 0.1734 | 15.78 |
-| 0 top-down sweeps | 0.6791 ± 0.0108 | 0.5722 ± 0.0042 | 0.2411 | 14.37 |
-| 1 top-down sweep | 0.6676 ± 0.0011 | 0.5726 ± 0.0022 | 0.1758 | 14.96 |
-| 3 top-down sweeps | 0.6641 ± 0.0020 | 0.5677 ± 0.0011 | 0.1722 | 16.72 |
-| no separator features | 0.6646 ± 0.0009 | 0.5685 ± 0.0020 | 0.1723 | 15.72 |
-| degree-ordered tree | 0.6650 ± 0.0002 | 0.5699 ± 0.0019 | 0.1764 | 15.99 |
-| random balanced tree | 0.6651 ± 0.0008 | 0.5695 ± 0.0010 | 0.1712 | 15.88 |
+| **full SCEPTRE** | 0.9481 ± 0.0384 | 0.8640 ± 0.0554 | 0.0333 | 15.32 |
+| 0 top-down sweeps | 0.9822 ± 0.0006 | 0.8332 ± 0.0017 | 0.0304 | 13.81 |
+| 1 top-down sweep | 0.9849 ± 0.0004 | 0.9095 ± 0.0042 | 0.0300 | 14.56 |
+| 3 top-down sweeps | 0.9814 ± 0.0022 | 0.9208 ± 0.0038 | 0.0323 | 15.74 |
+| no separator features | 0.9835 ± 0.0018 | 0.9025 ± 0.0086 | 0.0333 | 15.02 |
+| degree-ordered tree | 0.9814 ± 0.0010 | 0.9058 ± 0.0035 | 0.0308 | 15.15 |
+| random balanced tree | 0.9831 ± 0.0027 | 0.9116 ± 0.0020 | 0.0318 | 15.27 |
 
-The decisive control is the **random balanced tree**: same depth, same parameter count, differing only in whether the partition respects the electrical structure. Full SCEPTRE 0.6638 vs 0.6651 (-0.0013).
+The decisive control is the **random balanced tree**: same depth, same parameter count, differing only in whether the partition respects the electrical structure. Full SCEPTRE 0.9481 vs 0.9831 (-0.0349).
 
 ---
 

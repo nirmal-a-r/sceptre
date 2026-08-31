@@ -159,16 +159,16 @@ rows cannot be evaluated at a different bus count.}
 Model & Detection F1 & Localization F1 & Zero-shot F1 @118
   & Params @14 & Params @118 \\
 \midrule
-ST-Transformer \cite{sttrans2023} & 0.6681 $\pm$ 0.0019 & 0.5710 & \textbf{n/a} & 1,380,871 & 1,420,807 \\
-Graphormer & 0.6676 $\pm$ 0.0029 & 0.5702 & \textbf{n/a} & 1,380,891 & 1,420,827 \\
-BiLSTM & 0.6674 $\pm$ 0.0032 & 0.5700 & \textbf{n/a} & 935,623 & 975,559 \\
-KAN \cite{graphkan2025} & 0.6664 $\pm$ 0.0006 & 0.5701 & 0.661 & 1,592,071 & \textit{unchanged} \\
-MLP (no topology) & 0.6662 $\pm$ 0.0014 & 0.5684 & \textbf{n/a} & 935,047 & 974,983 \\
-MSA3E \cite{cui2025} & 0.6659 $\pm$ 0.0040 & 0.5693 & \textbf{n/a} & 1,380,871 & 1,420,807 \\
-\textbf{SCEPTRE (RSTE)} & 0.6651 $\pm$ 0.0037 & 0.5692 & 0.667 & 1,447,111 & \textit{unchanged} \\
-GCN & 0.6645 $\pm$ 0.0020 & 0.5691 & 0.664 & 929,671 & \textit{unchanged} \\
-S4 / Mamba-lite & 0.6638 $\pm$ 0.0020 & 0.5675 & \textbf{n/a} & 977,095 & 1,017,031 \\
-GAT & 0.6633 $\pm$ 0.0006 & 0.5679 & 0.667 & 1,374,343 & \textit{unchanged} \\
+MLP (no topology) & 0.9863 $\pm$ 0.0027 & 0.8299 & \textbf{n/a} & 935,046 & 974,982 \\
+BiLSTM & 0.9824 $\pm$ 0.0022 & 0.9198 & \textbf{n/a} & 935,622 & 975,558 \\
+GCN & 0.9823 $\pm$ 0.0041 & 0.9084 & 0.790 & 929,670 & \textit{unchanged} \\
+\textbf{SCEPTRE (RSTE)} & 0.9815 $\pm$ 0.0077 & 0.9115 & 0.797 & 1,447,110 & \textit{unchanged} \\
+Graphormer & 0.9813 $\pm$ 0.0044 & 0.9160 & \textbf{n/a} & 1,380,890 & 1,420,826 \\
+ST-Transformer \cite{sttrans2023} & 0.9794 $\pm$ 0.0074 & 0.9154 & \textbf{n/a} & 1,380,870 & 1,420,806 \\
+S4 / Mamba-lite & 0.9786 $\pm$ 0.0039 & 0.8782 & \textbf{n/a} & 977,094 & 1,017,030 \\
+MSA3E \cite{cui2025} & 0.9735 $\pm$ 0.0028 & 0.9032 & \textbf{n/a} & 1,380,870 & 1,420,806 \\
+GAT & 0.9601 $\pm$ 0.0284 & 0.8883 & 0.702 & 1,374,342 & \textit{unchanged} \\
+KAN \cite{graphkan2025} & 0.9503 $\pm$ 0.0208 & 0.8492 & 0.682 & 1,592,070 & \textit{unchanged} \\
 \bottomrule
 \end{tabular}
 \end{table*}
