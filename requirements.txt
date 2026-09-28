@@ -37,6 +37,7 @@ scikit-learn>=1.5
 matplotlib>=3.9
 jupyterlab>=4.2
 ipykernel>=6.29
+python-docx>=1.1         # generates SCEPTRE_Report.docx and SCEPTRE_Study_Guide.docx
 
 # --- not required ------------------------------------------------------
 # No mamba-ssm, no causal-conv1d, no CUDA compilation, no cvxpy.
