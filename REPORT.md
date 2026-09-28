@@ -11,7 +11,7 @@ Based on Data-Driven FDI Attacks Detection and Data Repair," *IEEE Transactions
 on Smart Grid*, vol. 16, no. 6, pp. 5404–5415, Nov. 2025.
 doi: `10.1109/TSG.2025.3590035`
 
-**Companion artifacts.** `SCEPTRE.ipynb` (47 cells, all code and all figures) ·
+**Companion artifacts.** `SCEPTRE.ipynb` (78 cells, all code and all figures) ·
 `SCEPTRE_Review.pptx` (14-slide review deck) · `docs/00_STUDY_GUIDE.md`
 (tutorial-level explanation) · `outputs/sceptre_results.json` (every number,
 machine-readable).
@@ -55,10 +55,10 @@ On IEEE 14-bus, SCEPTRE improves significantly on the base paper's MSA3E detecto
 ahead. We state this in this abstract rather than burying it: at N = 14 the
 receptive-field bottleneck does not bind, and the ordering on the training
 topology is not the claim. The claims that survive are the categorical ones —
-five of the ten benchmarked architectures cannot be evaluated at a different bus
-count *at all* — and the empirical one that is the subject of §6.8: native
-training on IEEE 118-bus, where the bottleneck *does* bind, and where the
-receptive-field argument is put to a direct test against GCN.
+six of the ten benchmarked architectures cannot be evaluated at a different bus
+count *at all*. The notebook also includes a native IEEE 118-bus SCEPTRE-versus-GCN
+experiment (Cell 22b) to test whether the transfer gap widens at scale. Its current
+results are not included here until that cell has been run at the reported budget.
 
 ---
 
@@ -698,18 +698,18 @@ The decisive control is the **random balanced tree**: same depth, same parameter
 
 ### 7.2 What it does not establish, and the prepared answer for each
 
-1. **SCEPTRE is not the best detector on IEEE 14-bus.** A GCN is. Stated plainly
+1. **SCEPTRE is not the best detector on IEEE 14-bus.** An MLP is. Stated plainly
    in the abstract and explained: at N = 14 a 3-layer message-passing stack
    reaches 57 % of the grid, so the receptive-field bottleneck does not bind.
-   *Prepared answer:* §6.8 runs the test where it does bind — native 118-bus
-   training. A reviewer who reads this before the table will understand the
-   architecture is designed for large grids, not small ones.
+   *Prepared answer:* Cell 22b contains the native 118-bus comparison, but its
+   result is intentionally not claimed until it is run at the reported budget.
 
 2. **The transfer advantage over `N`-invariant baselines is not resolved** at
-   three seeds on the zero-shot task alone. §6.8 addresses this directly.
+   three seeds on the zero-shot task alone. Cell 22b is the registered follow-up
+   experiment, pending a full-budget run.
    *Prepared answer:* the categorical result (six of ten cannot be evaluated at
    another bus count at all) is structural, not statistical. The model-ordering
-   question is the subject of §6.8, whose outcome is printed by the notebook.
+   question remains open until the native-118 experiment is executed.
 
 3. **HALO's absolute per-bus FDR exceeds the nominal level.** The mechanism is
    identified: a null-space attack perturbs every bus simultaneously, so an
@@ -816,8 +816,8 @@ reports the attacker's meter cost, and none ships per-sample physics certificate
 SCEPTRE does all three, and does so within a closed detect→repair→control loop
 that scales to 118 buses.
 
-**What remains open.** The model ordering at 118-bus native scale (§6.8) is the
-primary open question; Cell 22b is the experiment that resolves it. The per-bus
+**What remains open.** The model ordering at 118-bus native scale is the primary
+open question; Cell 22b is the experiment designed to resolve it. The per-bus
 FDR guarantee (§4.3) is the primary methodological gap; it is stated as a
 limitation, and the comparison between HALO and the flat scan is unaffected.
 

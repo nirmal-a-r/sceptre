@@ -18,11 +18,12 @@ architecture + statistics contribution rather than demanding a field trial.
   squarely in scope.
 * **What must be in the paper.** The χ² measurement (Figure 13) is the hook — it
   says, quantitatively, that the field has been defending against an easy attack.
-  Lead with it. The 118-bus native training result (§6.8) is the empirical
-  upgrade: it converts the categorical capability claim into a measured win at
-  the scale where the bottleneck binds.
-* **Risk (reduced by Cell 22b).** Reviewers will ask for native-scale training.
-  Cell 22b addresses this directly. The prepared answer is §6.8 in REPORT.md.
+  Lead with it. Native 118-bus training is the empirical follow-up that tests
+  whether the categorical capability advantage turns into a measured win where
+  the receptive-field bottleneck binds.
+* **Risk (partly addressed by Cell 22b).** Reviewers will ask for native-scale
+  training. Cell 22b implements and caches that comparison; run it at the full
+  budget before submission, then add its results to `REPORT.md`.
 * Typical decision time: 3–5 months.
 
 ### 2. IEEE Transactions on Industrial Informatics  (IEEE)

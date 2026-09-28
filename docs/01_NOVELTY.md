@@ -236,7 +236,7 @@ it as an instruction to run more rounds, not as a result.
 
 ### C7 — the four propositions  ·  **KNOWN MACHINERY, NEW COROLLARY**
 
-Added in `SCEPTRE_v2.ipynb`, Part 19.
+Implemented and tested in the current `SCEPTRE.ipynb`, Part 19.
 
 **What is NOT new, and must not be claimed.** Receptive-field limits on
 message-passing networks are textbook graph-learning theory: an MPNN is bounded

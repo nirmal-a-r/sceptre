@@ -93,7 +93,7 @@ level and every node**. Consequences:
   case118 alike.
 * **Repeating the top-down sweep is a truncated fixed-point iteration** on the
   tree — a deep-equilibrium-style construction, but over a spatial decomposition
-  rather than over time. Ablated in Part 13 at `K ∈ {0,1,2,3}`.
+  rather than over time. Ablated in Part 14 at `K ∈ {0,1,2,3}`.
 * **Receptive field.** Any two buses communicate through their lowest common
   ancestor, so information travels at most `2·depth = O(log N)` tree hops. A
   `k`-layer GNN reaches `k` graph hops, and the diameters above are 5/6/12/14.

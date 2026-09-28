@@ -100,7 +100,7 @@ flagged as unresolved in the text.
 | Grid construction + separator trees (4 systems) | 5 s |
 | AC response-surface fitting + verification | 20–40 s |
 | Dataset generation (4 systems) | 15–25 s |
-| Main benchmark — 10 models × 3 seeds × 30 epochs | 8–12 min |
+| Main benchmark — 10 models × 3 seeds × 40 epochs | 8–12 min |
 | Attack-severity sweep — 5 severities × 4 models × 2 seeds | 12–18 min |
 | Zero-shot transfer evaluation | 20 s |
 | HALO (4 systems) | 30 s |
@@ -154,7 +154,7 @@ reloaded.
 |---|---|---|
 | `SCEPTRE_RESUME` | `1` | `0` forces a cold run and ignores `checkpoints/` |
 | `SCEPTRE_GPU_FRAC` | unset | caps this process's share of VRAM, e.g. `0.22` |
-| `SCEPTRE_BUDGET` | `full` | `smoke` / `quick` / `full` |
+| `SCEPTRE_BUDGET` | `full` | `smoke` / `full` / `paper` |
 
 A cold run and a resumed run initialise identically: the model factory is
 invoked *after* `set_seed(GLOBAL_SEED + seed)` on both paths, so a resumed run
@@ -187,20 +187,17 @@ fixed batch after training and are far less sensitive to what else is running.
 
 ---
 
-## 6. Rebuilding the notebook
+## 6. Running the notebook
 
-The notebook is generated from cell-marked sources so that diffs are readable:
+`SCEPTRE.ipynb` is the single source of truth. Open it from the repository root
+in JupyterLab and use **Run All**, or execute it headlessly:
 
 ```bash
-cd nb
-python build.py            # -> ../SCEPTRE.ipynb
-python build.py --script   # -> _full.py   (headless run, same code)
-python build.py --probe    # -> _quick.py  (short learnability check)
+jupyter nbconvert --to notebook --execute --inplace SCEPTRE.ipynb
 ```
 
-Edit `SCEPTRE.ipynb` directly. The former `nb/src_*.py` sources and their
-builder have been merged into the notebook and removed: the notebook is now
-the single source of truth, so there is nothing that can overwrite it.
+Set `SCEPTRE_BUDGET` to `smoke`, `full`, or `paper` before launching the kernel.
+There is no source-builder step and no generated script to edit.
 
 ---
 

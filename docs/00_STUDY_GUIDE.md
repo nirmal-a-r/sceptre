@@ -440,7 +440,7 @@ lowest common ancestor: at most `2 × depth` tree hops. A `k`-layer GNN reaches
 
 **(3) The repeated top-down sweep is a truncated fixed point.** Applying the same
 weights repeatedly is a **deep-equilibrium**-style iteration — but over a spatial
-decomposition rather than over time. `K` is ablated at `{0,1,2,3}` in Part 13.
+decomposition rather than over time. `K` is ablated at `{0,1,2,3}` in Part 14.
 
 ### Making it fast
 
