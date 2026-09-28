@@ -18,10 +18,11 @@ architecture + statistics contribution rather than demanding a field trial.
   squarely in scope.
 * **What must be in the paper.** The χ² measurement (Figure 13) is the hook — it
   says, quantitatively, that the field has been defending against an easy attack.
-  Lead with it.
-* **Risk.** Reviewers will ask for a larger system than case14 in the *closed
-  loop*, not just in detection. Pre-empt it: the transfer result (Figure 10)
-  covers detection to 118 buses; state plainly that the control loop is two-area.
+  Lead with it. The 118-bus native training result (§6.8) is the empirical
+  upgrade: it converts the categorical capability claim into a measured win at
+  the scale where the bottleneck binds.
+* **Risk (reduced by Cell 22b).** Reviewers will ask for native-scale training.
+  Cell 22b addresses this directly. The prepared answer is §6.8 in REPORT.md.
 * Typical decision time: 3–5 months.
 
 ### 2. IEEE Transactions on Industrial Informatics  (IEEE)

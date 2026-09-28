@@ -57,25 +57,25 @@
     "case14": {
       "r2_linear": 0.9989843322665054,
       "r2_quadratic": 0.9999990445464852,
-      "gain": 32.60401217677646,
+      "gain": 32.60401217678592,
       "nr_solves": 410
     },
     "case30": {
       "r2_linear": 0.9991259210577301,
       "r2_quadratic": 0.9999988228106433,
-      "gain": 27.24910016840962,
+      "gain": 27.24910016849598,
       "nr_solves": 410
     },
     "case57": {
       "r2_linear": 0.9954312601780687,
       "r2_quadratic": 0.9999693443198064,
-      "gain": 12.207949807036739,
+      "gain": 12.207949807034359,
       "nr_solves": 410
     },
     "case118": {
       "r2_linear": 0.9880356042415472,
-      "r2_quadratic": 0.9999189396290963,
-      "gain": 12.149015658289487,
+      "r2_quadratic": 0.9999189396290962,
+      "gain": 12.149015658289008,
       "nr_solves": 300
     }
   },
@@ -1378,8 +1378,8 @@
       "halo_fdr": 0.8357400722021661,
       "halo_fdr_node": 0.7330976707413489,
       "halo_probes": 1.8039772727272727,
-      "flat_f1": 0.01848998459167951,
-      "flat_fdr": 0.8554476806903991,
+      "flat_f1": 0.018491260349586015,
+      "flat_fdr": 0.8552915766738661,
       "flat_probes": 118.0
     }
   },
@@ -1715,6 +1715,7 @@
     "fig07_dataset": "SSC dataset composition: severity, stealth strata, attacker cost, payoff scaling, and an example attacked episode.",
     "fig08_benchmark": "Detection, localization, repair, convergence, ROC/PR and paired significance across ten architectures.",
     "fig09_stratified": "F1 along the stealth, severity and attacker-cost axes, with stratum sizes and score distributions.",
+    "fig10b_scale_training": "118-bus native training: SCEPTRE vs GCN, zero-shot vs native, and the transfer gap as a function of N.",
     "fig10_transfer": "Zero-shot transfer from case14 to case30/57/118, retention, and the N-invariance / receptive-field capability quadrant.",
     "fig11_halo": "HALO localization cost, power, measured FDR, and early-exit behaviour.",
     "fig12_conformal": "Mondrian vs pooled conditional coverage, regime residual distributions, and adaptive conformal under attacker drift.",

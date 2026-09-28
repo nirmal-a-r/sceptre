@@ -1,0 +1,934 @@
+
+================================================================================
+=== Notebook Cell Index 25 [code] ===
+================================================================================
+# =====================================================================
+# CELL 18 — Training loop with AMP, and the metric suite
+# =====================================================================
+LAMBDA_LOC, LAMBDA_REP = 1.0, 0.5
+
+
+def to_t(a, device=DEVICE):
+    return torch.as_tensor(a, dtype=torch.float32, device=device)
+
+
+def auto_bs(n_bus, base=512, lo=8, hi=512):
+    """Batch size scaled so activation volume is independent of the bus count.
+
+    Activation volume in the temporal encoder is proportional to
+    `batch x n_bus`, so a batch that is comfortable on IEEE 14-bus is about
+    eight times larger on IEEE 118-bus -- which is exactly the direction Parts
+    9-11 evaluate in. A batch constant chosen while looking at case14 is
+    therefore a latent out-of-memory error that only fires on the largest
+    system, i.e. the one furthest into a long run. This project hit that bug
+    twice, in two different forward loops, before the rule was centralised
+    here.
+
+    Batching never changes a reported number -- it only changes how the same
+    forward pass is chunked -- so this is free to apply everywhere.
+    """
+    return int(np.clip(base * 14 / max(n_bus, 1), lo, hi))
+
+
+@torch.no_grad()
+def evaluate(model, X, bs=None):
+    """Forward the whole split; returns (p_det, p_loc, repair).
+
+    Batch defaults to `auto_bs(n_bus)`; see there for why it is not a constant.
+    """
+    model.eval()
+    n_bus = X.shape[2]
+    if bs is None:
+        bs = auto_bs(n_bus)
+    A, B_, C_ = [], [], []
+    i = 0
+    while i < len(X):
+        try:
+            with torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=USE_AMP):
+                d, l, r = model(to_t(X[i:i + bs]))
+        except torch.OutOfMemoryError:
+            # Halve and retry rather than lose the run. A shared GPU means the
+            # free-memory figure is not ours to predict.
+            if bs <= 8:
+                raise
+            torch.cuda.empty_cache()
+            bs = max(8, bs // 2)
+            print(f"   [eval] out of memory -- retrying at batch {bs}")
+            continue
+        A.append(torch.sigmoid(d.float()).cpu().numpy())
+        B_.append(torch.sigmoid(l.float()).cpu().numpy())
+        C_.append(r.float().cpu().numpy())
+        i += bs
+    return np.concatenate(A), np.concatenate(B_), np.concatenate(C_)
+
+
+def binary_metrics(y, p, thr=None):
+    """F1-optimal-threshold metrics plus AUC and average precision."""
+    y = np.asarray(y).astype(int).ravel(); p = np.asarray(p).ravel()
+    if thr is None:
+        cand = np.quantile(p, np.linspace(0.02, 0.98, 80))
+        f1s = []
+        for t in cand:
+            yp = (p >= t)
+            tp = (yp & (y == 1)).sum(); fp = (yp & (y == 0)).sum()
+            fn = ((~yp) & (y == 1)).sum()
+            f1s.append(2 * tp / max(2 * tp + fp + fn, 1))
+        thr = float(cand[int(np.argmax(f1s))])
+    yp = (p >= thr)
+    tp = int((yp & (y == 1)).sum()); fp = int((yp & (y == 0)).sum())
+    fn = int(((~yp) & (y == 1)).sum()); tn = int(((~yp) & (y == 0)).sum())
+    prec = tp / max(tp + fp, 1); rec = tp / max(tp + fn, 1)
+    f1 = 2 * prec * rec / max(prec + rec, 1e-9)
+    # AUC by the rank statistic
+    order = np.argsort(p); r = np.empty(len(p)); r[order] = np.arange(1, len(p) + 1)
+    n1 = int(y.sum()); n0 = len(y) - n1
+    auc = ((r[y == 1].sum() - n1 * (n1 + 1) / 2) / max(n1 * n0, 1)) if n1 and n0 else 0.5
+    # average precision
+    o = np.argsort(-p); ys = y[o]
+    ctp = np.cumsum(ys); prec_c = ctp / np.arange(1, len(ys) + 1)
+    ap = float((prec_c * ys).sum() / max(n1, 1))
+    # ---- operating-point recall -------------------------------------------
+    # F1 picks whatever threshold maximises F1, which is not a threshold anyone
+    # operates at. A control room fixes the alarm budget first and accepts the
+    # recall that comes with it, so the honest summary of a detector is:
+    # "at one false alarm in a hundred clean windows, what fraction of attacks
+    # do you still catch?" Two detectors tied on F1 routinely differ by tens of
+    # points here, because this region of the ROC is decided by the hardest
+    # attacks rather than the average one.
+    tpr_at = {}
+    if n1 and n0:
+        clean = np.sort(p[y == 0])
+        for far in (1e-2, 1e-3):
+            # threshold at the (1 - far) quantile of the CLEAN score
+            # distribution: by construction the empirical false-alarm rate is
+            # `far`, so recall is the only free quantity.
+            k = int(np.ceil((1.0 - far) * len(clean))) - 1
+            k = int(np.clip(k, 0, len(clean) - 1))
+            t_far = float(clean[k])
+            tpr_at[far] = float((p[y == 1] >= t_far).mean())
+    else:
+        tpr_at = {1e-2: float("nan"), 1e-3: float("nan")}
+    return dict(acc=(tp + tn) / max(len(y), 1), prec=float(prec), rec=float(rec),
+                f1=float(f1), auc=float(auc), ap=ap, thr=float(thr),
+                tp=tp, fp=fp, fn=fn, tn=tn,
+                tpr_at_1e2=tpr_at[1e-2], tpr_at_1e3=tpr_at[1e-3])
+
+
+def _train_given_model(model, case, seed=0, epochs=None, bs=None, lr=2.2e-3,
+                       verbose=False, data=None):
+    """Train an ALREADY-CONSTRUCTED, already-bound model.
+
+    Split out from `train_model` so the ablation study in Part 15 can inject
+    custom variants through exactly the same optimiser, schedule and data path.
+    """
+    epochs = epochs or BUDGET.epochs
+    bs = bs or BUDGET.batch
+    set_seed(GLOBAL_SEED + seed)
+    D = data or DATA[case]
+    params = list(model.parameters()) + ([model.pos] if model.pos is not None else [])
+    opt = torch.optim.AdamW(params, lr=lr, weight_decay=1e-4, betas=(0.9, 0.98))
+    Xtr, ytr, ltr, Ctr = D["Xtr"], D["ytr"], D["ltr"], D["Ctr"]
+    # ---- Upgrade 3: certificate-guided importance weighting -----------------
+    # Hard-example mining normally reweights by the model's own loss, which is
+    # self-reinforcing -- the model decides what counts as hard. Here hardness
+    # comes from a PHYSICS quantity the model never observes: the per-sample
+    # attack severity recorded in the SSC certificate. Small attacks are
+    # objectively harder to detect and are where the headroom is. Clean windows
+    # keep weight 1, and the whole vector is renormalised to mean 1 so the
+    # effective learning rate is unchanged and the comparison stays fair.
+    if USE_CURRIC and "Str" in D:
+        sev = D["Str"][:, 6]                       # certificate field: severity
+        att = ytr > 0.5
+        w_tr = np.ones(len(Xtr), dtype=np.float32)
+        if att.any():
+            lo, hi = float(sev[att].min()), float(sev[att].max())
+            rel = (sev[att] - lo) / max(hi - lo, 1e-9)      # 0 = smallest attack
+            w_tr[att] = 1.0 + CURRIC_LAMBDA * (1.0 - rel)
+        w_tr *= len(w_tr) / max(w_tr.sum(), 1e-9)           # mean 1
+    else:
+        w_tr = np.ones(len(Xtr), dtype=np.float32)
+    n = len(Xtr); steps = max(1, n // bs) * epochs
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, lr, total_steps=steps,
+                                                pct_start=0.25)
+    Cmu, Csd = Ctr.mean((0, 1), keepdims=True), Ctr.std((0, 1), keepdims=True) + 1e-6
+    hist = []
+    # Micro-batch size follows the SYSTEM. Activation volume scales with the bus
+    # count, so a batch that fits comfortably on IEEE 14-bus is roughly eight
+    # times larger on IEEE 118-bus. Splitting the forward/backward and
+    # accumulating the gradient keeps the OPTIMISER's batch at `bs` -- the update
+    # is numerically the same -- while capping peak memory. Batch size therefore
+    # remains a fixed experimental parameter rather than one silently traded
+    # against whatever else happens to be running on the GPU.
+    n_bus = Xtr.shape[2]
+    micro = int(np.clip(int(256 * 14 / max(n_bus, 1)), 16, bs))
+    micro = min(micro, bs)
+    t0 = time.time(); k = 0
+    for ep in range(epochs):
+        model.train(); perm = np.random.permutation(n); tot = 0.0; nb = 0
+        for i in range(0, n - bs + 1, bs):
+            idx = perm[i:i + bs]
+            opt.zero_grad(set_to_none=True)
+            step_loss = 0.0
+            j = 0
+            while j < bs:
+                sub = idx[j:j + micro]
+                w = len(sub) / float(bs)          # exact re-weighting
+                x = to_t(Xtr[sub]); yd = to_t(ytr[sub]); yl = to_t(ltr[sub])
+                yc = to_t((Ctr[sub] - Cmu) / Csd)
+                try:
+                    wb = to_t(w_tr[sub])
+                    with torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=USE_AMP):
+                        d_, l_, r_ = model(x)
+                        det_l = (F.binary_cross_entropy_with_logits(
+                            d_.float(), yd, reduction="none") * wb).mean()
+                        loc_l = (F.binary_cross_entropy_with_logits(
+                            l_.float(), yl, reduction="none").mean(-1) * wb).mean()
+                        rep_l = (((r_.float() - yc) ** 2).mean((-1, -2)) * wb).mean()
+                        loss = det_l + LAMBDA_LOC * loc_l + LAMBDA_REP * rep_l
+                    (loss * w).backward()
+                except torch.OutOfMemoryError:
+                    # A shared GPU means free memory is not ours to predict.
+                    # Shrink the micro-batch and redo this optimiser step.
+                    if micro <= 16:
+                        raise
+                    torch.cuda.empty_cache()
+                    micro = max(16, micro // 2)
+                    print(f"   [train] out of memory -- micro-batch -> {micro}")
+                    opt.zero_grad(set_to_none=True)
+                    step_loss = 0.0; j = 0
+                    continue
+                step_loss += float(loss) * w
+                j += micro
+            torch.nn.utils.clip_grad_norm_(params, 1.0)
+            opt.step()
+            if k < steps - 1: sched.step()
+            k += 1; tot += step_loss; nb += 1
+        pdv, _, _ = evaluate(model, D["Xca"])
+        mv = binary_metrics(D["yca"], pdv)
+        hist.append(dict(epoch=ep, loss=tot / max(nb, 1), val_f1=mv["f1"],
+                         val_auc=mv["auc"], lr=sched.get_last_lr()[0]))
+        if verbose:
+            print(f"    ep{ep:02d} loss={hist[-1]['loss']:.4f} valF1={mv['f1']:.4f}")
+    train_s = time.time() - t0
+
+    # ---- test-set metrics ----
+    pd_, pl_, pr_ = evaluate(model, D["Xte"])
+    det = binary_metrics(D["yte"], pd_)
+    loc = binary_metrics(D["lte"].ravel(), pl_.ravel())
+    rep_rmse = float(np.sqrt((((D["Cte"] - Cmu) / Csd - pr_) ** 2).mean()))
+    # ---- inference latency ----
+    xb = to_t(D["Xte"][:BUDGET.batch]); model.eval()
+    with torch.no_grad(), torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=USE_AMP):
+        for _ in range(3): model(xb)
+        if DEVICE == "cuda": torch.cuda.synchronize()
+        t1 = time.time()
+        for _ in range(15): model(xb)
+        if DEVICE == "cuda": torch.cuda.synchronize()
+    lat = (time.time() - t1) / 15 * 1000.0
+    peak = (torch.cuda.max_memory_allocated() / 1e6) if DEVICE == "cuda" else 0.0
+    return dict(model=model, hist=hist, det=det, loc=loc, rep_rmse=rep_rmse,
+                train_s=train_s, latency_ms=lat, params=model.n_params(),
+                peak_mb=peak, Cmu=Cmu, Csd=Csd, probs=pd_, loc_probs=pl_)
+
+
+def train_model(kind, case, seed=0, epochs=None, bs=None, lr=2.2e-3, d=None,
+                verbose=False, data=None, n_sweeps=2):
+    set_seed(GLOBAL_SEED + seed)
+    model = (Detector(kind, d=d, n_sweeps=n_sweeps).to(DEVICE)
+             .bind(PLANS[case], CTX[case], GRIDS[case]["n"], GRIDS[case]))
+    return _train_given_model(model, case, seed=seed, epochs=epochs, bs=bs,
+                              lr=lr, verbose=verbose, data=data)
+
+
+# ---------------------------------------------------------------------------
+# Resumable training
+# ---------------------------------------------------------------------------
+# A ten-architecture, three-seed benchmark is roughly two GPU-hours, and the
+# ablation adds more. On a single-GPU workstation the GPU is usually shared with
+# whatever else the researcher is running, so an interruption two thirds of the
+# way through is a normal event rather than an exotic one -- and losing all of
+# the completed work to it is pure waste.
+#
+# Every (architecture, variant, seed) is therefore written to `checkpoints/` the
+# moment it finishes and reloaded on a rerun. The cache key is a fingerprint of
+# the things that would change the answer -- budget, model width and depth,
+# window, epochs, batch size, global seed, system, and the number of training
+# windows -- so editing any of them invalidates the cache instead of silently
+# serving a stale number. Set SCEPTRE_RESUME=0 to force a cold run.
+CKPTDIR = os.path.join(ROOT, "checkpoints")
+os.makedirs(CKPTDIR, exist_ok=True)
+RESUME = os.environ.get("SCEPTRE_RESUME", "1") != "0"
+
+
+def _cfg_fingerprint(case):
+    b = BUDGET
+    key = (b.name, b.d_model, b.n_layers, b.epochs, b.batch, WINDOW, case,
+           GLOBAL_SEED, int(DATA[case]["Xtr"].shape[0]),
+           # The upgrades change the inputs, the head and the loss. A checkpoint
+           # trained without them is a different experiment, so they belong in
+           # the key -- otherwise a stale file would be served as if it were the
+           # new result, which is the worst failure mode a cache can have.
+           CHANNELS, USE_RESID, USE_PROJREP, USE_CURRIC, CURRIC_LAMBDA,
+           # Architecture revision. BUMP THIS whenever a shared module
+           # changes shape or semantics -- otherwise a checkpoint trained
+           # under the old head is silently reloaded and reported as a new
+           # result. r2 = detection head reads top-k instead of max, and
+           # consumes two features from the localisation head.
+           "arch-r2")
+    return hashlib.md5(repr(key).encode()).hexdigest()[:10]
+
+
+def train_cached(key, case, seed, make, **kw):
+    """Train once, then memoise on disk.
+
+    `key`   short string naming the architecture *and* its variant, so the
+            ablation's seven trees do not collide with each other.
+    `make`  callable returning a fully constructed and bound model. It is
+            invoked only on a cache miss, immediately after the seed is set, so
+            a cold run and a resumed run initialise identically.
+
+    Returns the same dict as `_train_given_model`, plus `cached: bool`.
+    """
+    path = os.path.join(CKPTDIR, f"{_cfg_fingerprint(case)}_{key}_s{seed}.pt")
+    if RESUME and os.path.exists(path):
+        try:
+            blob = torch.load(path, map_location=DEVICE, weights_only=False)
+            set_seed(GLOBAL_SEED + seed)
+            model = make()
+            model.load_state_dict(blob.pop("state"))
+            model.eval()
+            blob["model"] = model
+            blob["cached"] = True
+            return blob
+        except Exception as e:
+            print(f"   [cache] ignoring unreadable {os.path.basename(path)}: {e}")
+    set_seed(GLOBAL_SEED + seed)
+    model = make()
+    r = _train_given_model(model, case, seed=seed, **kw)
+    blob = {k: v for k, v in r.items() if k != "model"}
+    blob["state"] = {k: v.detach().cpu() for k, v in r["model"].state_dict().items()}
+    try:
+        torch.save(blob, path)
+    except Exception as e:
+        print(f"   [cache] could not write {os.path.basename(path)}: {e}")
+    r["cached"] = False
+    return r
+
+
+def bench_model(kind, case, seed):
+    """The benchmark's standard build: one architecture, default tree, bound."""
+    return train_cached(
+        kind, case, seed,
+        lambda: (Detector(kind, d=BUDGET.d_model, n_sweeps=2).to(DEVICE)
+                 .bind(PLANS[case], CTX[case], GRIDS[case]["n"], GRIDS[case])))
+
+
+SEEDS = list(BUDGET.seeds)
+BENCH_CASE = "case14"
+print(f"Benchmark: {len(MODELS)} architectures x {len(SEEDS)} seeds on {BENCH_CASE}")
+print(f"  d = {BUDGET.d_model}, layers = {BUDGET.n_layers}, W = {WINDOW}, "
+      f"epochs = {BUDGET.epochs}, batch = {BUDGET.batch}, autocast = {AMP_DTYPE}\n")
+hdr = (f"{'model':<22}{'seed':>5}{'det F1':>9}{'det AUC':>9}{'det AP':>9}"
+       f"{'loc F1':>9}{'rep RMSE':>10}{'train s':>9}{'ms/batch':>10}{'MB':>8}")
+print(hdr); print("-" * len(hdr))
+RESULTS = defaultdict(list)
+t0 = time.time()
+for m in MODELS:
+    for s in SEEDS:
+        if DEVICE == "cuda": torch.cuda.reset_peak_memory_stats()
+        r = bench_model(m, BENCH_CASE, s)
+        RESULTS[m].append(r)
+        print(f"{PRETTY[m]:<22}{s:>5}{r['det']['f1']:>9.4f}{r['det']['auc']:>9.4f}"
+              f"{r['det']['ap']:>9.4f}{r['loc']['f1']:>9.4f}{r['rep_rmse']:>10.4f}"
+              f"{r['train_s']:>9.1f}{r['latency_ms']:>10.2f}{r['peak_mb']:>8.0f}"
+              f"{'  (cached)' if r.get('cached') else ''}")
+        if DEVICE == "cuda": torch.cuda.empty_cache()
+print("-" * len(hdr))
+print(f"total benchmark wall time: {time.time()-t0/1:.1f} s"
+      if False else f"total benchmark wall time: {time.time()-t0:.1f} s")
+
+
+def agg(m, key, sub=None):
+    v = [r[key][sub] if sub else r[key] for r in RESULTS[m]]
+    return float(np.mean(v)), float(np.std(v)), np.array(v)
+
+
+def paired_t(a, b):
+    d = np.asarray(a) - np.asarray(b)
+    if len(d) < 2 or d.std(ddof=1) == 0:
+        return float("nan")
+    return float(d.mean() / (d.std(ddof=1) / math.sqrt(len(d))))
+
+
+================================================================================
+=== Notebook Cell Index 26 [code] ===
+================================================================================
+# =====================================================================
+# CELL 19 — FIGURE 8: the benchmark, with error bars and paired tests
+# =====================================================================
+order = sorted(MODELS, key=lambda m: -agg(m, "det", "f1")[0])
+fig = plt.figure(figsize=(15.2, 9.6))
+gs = fig.add_gridspec(3, 3, hspace=0.58, wspace=0.28)
+
+# ---- (a) detection F1 ----
+ax = fig.add_subplot(gs[0, :2])
+mu = [agg(m, "det", "f1")[0] for m in order]; sd = [agg(m, "det", "f1")[1] for m in order]
+cols = [PAL["blue"] if m == "sceptre" else PAL["grey"] for m in order]
+ax.bar(range(len(order)), mu, yerr=sd, capsize=3, color=cols, edgecolor="white")
+ax.set_xticks(range(len(order)))
+ax.set_xticklabels([PRETTY[m] for m in order], rotation=22, ha="right")
+ax.set_ylabel("detection F1"); ax.set_ylim(max(0, min(mu) - 0.12), 1.02)
+ax.set_title(f"(a) attack detection, mean +/- s.d. over {len(SEEDS)} seeds",
+             fontsize=9.5)
+for i, (v, e) in enumerate(zip(mu, sd)):
+    ax.text(i, v + e + 0.006, f"{v:.3f}", ha="center", fontsize=7)
+
+# ---- (b) localization F1 ----
+ax = fig.add_subplot(gs[0, 2])
+mu2 = [agg(m, "loc", "f1")[0] for m in order]; sd2 = [agg(m, "loc", "f1")[1] for m in order]
+ax.barh(range(len(order)), mu2, xerr=sd2, capsize=2, color=cols, edgecolor="white")
+ax.set_yticks(range(len(order)))
+ax.set_yticklabels([PRETTY[m] for m in order], fontsize=7)
+ax.invert_yaxis(); ax.set_xlabel("per-bus localization F1")
+ax.set_title("(b) attack localization", fontsize=9.5)
+
+# ---- (c) convergence ----
+ax = fig.add_subplot(gs[1, 0])
+for m in order[:6]:
+    h = RESULTS[m][0]["hist"]
+    ax.plot([e["epoch"] for e in h], [e["val_f1"] for e in h],
+            label=PRETTY[m], lw=2.0 if m == "sceptre" else 1.1,
+            color=PAL["blue"] if m == "sceptre" else None,
+            alpha=1.0 if m == "sceptre" else 0.75)
+ax.set_xlabel("epoch"); ax.set_ylabel("validation F1")
+ax.set_title("(c) convergence", fontsize=9.5); ax.legend(fontsize=6.5)
+
+# ---- (d) accuracy vs cost ----
+ax = fig.add_subplot(gs[1, 1])
+for m in MODELS:
+    x = float(np.mean([r["latency_ms"] for r in RESULTS[m]]))
+    y = agg(m, "det", "f1")[0]
+    c_ = PAL["blue"] if m == "sceptre" else PAL["grey"]
+    ax.scatter([x], [y], s=110 if m == "sceptre" else 45, color=c_,
+               edgecolors="k", linewidths=0.5, zorder=3)
+    ax.annotate(PRETTY[m], (x, y), fontsize=6.2, xytext=(4, 4),
+                textcoords="offset points")
+ax.set_xscale("log"); ax.set_xlabel(f"inference latency (ms / {BUDGET.batch}-window batch)")
+ax.set_ylabel("detection F1"); ax.set_title("(d) accuracy vs. cost", fontsize=9.5)
+
+# ---- (e) repair RMSE ----
+ax = fig.add_subplot(gs[1, 2])
+mu3 = [agg(m, "rep_rmse")[0] for m in order]; sd3 = [agg(m, "rep_rmse")[1] for m in order]
+ax.barh(range(len(order)), mu3, xerr=sd3, capsize=2, color=cols, edgecolor="white")
+ax.set_yticks(range(len(order)))
+ax.set_yticklabels([PRETTY[m] for m in order], fontsize=7)
+ax.invert_yaxis(); ax.set_xlabel("repair RMSE (standardised, lower better)")
+ax.set_title("(e) telemetry repair", fontsize=9.5)
+
+# ---- (f) ROC ----
+def roc_curve(y, p):
+    o = np.argsort(-np.asarray(p)); y = np.asarray(y)[o]
+    tp = np.cumsum(y); fp = np.cumsum(1 - y)
+    return fp / max(fp[-1], 1), tp / max(tp[-1], 1)
+
+
+ax = fig.add_subplot(gs[2, 0])
+for m in order[:6]:
+    f_, t_ = roc_curve(DATA[BENCH_CASE]["yte"], RESULTS[m][0]["probs"])
+    ax.plot(f_, t_, lw=2.0 if m == "sceptre" else 1.0,
+            color=PAL["blue"] if m == "sceptre" else None,
+            label=f"{PRETTY[m]} ({agg(m,'det','auc')[0]:.3f})")
+ax.plot([0, 1], [0, 1], "k--", lw=0.8)
+ax.set_xlabel("false positive rate"); ax.set_ylabel("true positive rate")
+ax.set_title("(f) ROC (AUC in legend)", fontsize=9.5); ax.legend(fontsize=6.5)
+
+# ---- (g) precision-recall ----
+ax = fig.add_subplot(gs[2, 1])
+for m in order[:6]:
+    y = np.asarray(DATA[BENCH_CASE]["yte"]).astype(int)
+    p = RESULTS[m][0]["probs"]
+    o = np.argsort(-p); ys = y[o]
+    ctp = np.cumsum(ys)
+    prec_c = ctp / np.arange(1, len(ys) + 1); rec_c = ctp / max(ys.sum(), 1)
+    ax.plot(rec_c, prec_c, lw=2.0 if m == "sceptre" else 1.0,
+            color=PAL["blue"] if m == "sceptre" else None,
+            label=f"{PRETTY[m]} ({agg(m,'det','ap')[0]:.3f})")
+ax.set_xlabel("recall"); ax.set_ylabel("precision")
+ax.set_title("(g) precision-recall (AP in legend)", fontsize=9.5)
+ax.legend(fontsize=6.5)
+
+# ---- (h) paired t vs SCEPTRE ----
+ax = fig.add_subplot(gs[2, 2])
+others = [m for m in order if m != "sceptre"]
+base = agg("sceptre", "det", "f1")[2]
+dmu, tstat = [], []
+for m in others:
+    d_ = base - agg(m, "det", "f1")[2]
+    dmu.append(float(d_.mean())); tstat.append(paired_t(base, agg(m, "det", "f1")[2]))
+colz = [PAL["green"] if (t == t and t > 2) else
+        (PAL["orange"] if (t == t and t > 0) else PAL["red"]) for t in tstat]
+ax.barh(range(len(others)), dmu, color=colz, edgecolor="white")
+for i, (dv, tv) in enumerate(zip(dmu, tstat)):
+    ax.text(dv, i, f"  t={tv:+.2f}" if tv == tv else "  t=n/a",
+            va="center", fontsize=6.5, fontweight="bold")
+ax.axvline(0, color="k", lw=0.9)
+ax.set_yticks(range(len(others)))
+ax.set_yticklabels([PRETTY[m] for m in others], fontsize=7)
+ax.invert_yaxis()
+ax.set_xlabel(r"$\Delta$F1  (SCEPTRE $-$ baseline)")
+ax.set_title("(h) paired difference, seed-by-seed", fontsize=9.5)
+
+fig.suptitle("Figure 8 -- Head-to-head benchmark on NL-LFC / case14 against nine "
+             "architectures,\nincluding the base paper's MSA3E and 2023-2025 "
+             "graph, state-space and KAN detectors.",
+             y=0.995, fontsize=10.5, fontweight="bold")
+savefig(fig, "fig08_benchmark",
+        "Detection, localization, repair, convergence, ROC/PR and paired "
+        "significance across ten architectures.")
+plt.show()
+
+# ------------------------------- summary table -------------------------
+print(f"\n{'model':<22}{'det F1':>17}{'det AUC':>17}{'loc F1':>17}"
+      f"{'rep RMSE':>16}{'params':>11}")
+print("-" * 100)
+for m in order:
+    a = agg(m, "det", "f1"); b = agg(m, "det", "auc")
+    c_ = agg(m, "loc", "f1"); d_ = agg(m, "rep_rmse")
+    star = "  <<<" if m == "sceptre" else ""
+    print(f"{PRETTY[m]:<22}{a[0]:>10.4f}+/-{a[1]:<5.4f}{b[0]:>10.4f}+/-{b[1]:<5.4f}"
+          f"{c_[0]:>10.4f}+/-{c_[1]:<5.4f}{d_[0]:>9.4f}+/-{d_[1]:<5.4f}"
+          f"{PARAM_TABLE[m][0]:>11,}{star}")
+print("-" * 100)
+
+_others = [m for m in MODELS if m != "sceptre"]
+_bo_det = max(_others, key=lambda m: agg(m, "det", "f1")[0])
+_bo_loc = max(_others, key=lambda m: agg(m, "loc", "f1")[0])
+_t_msa = paired_t(base, agg("msa3e", "det", "f1")[2])
+print()
+print("INFERENCE, stated with its exceptions:")
+print(f"  * DETECTION. SCEPTRE {agg('sceptre','det','f1')[0]:.4f}"
+      f"+/-{agg('sceptre','det','f1')[1]:.4f}; strongest baseline "
+      f"{PRETTY[_bo_det]} {agg(_bo_det,'det','f1')[0]:.4f}.")
+print(f"    Paired t vs the base paper's MSA3E: {_t_msa:+.2f}"
+      f"{'  (SCEPTRE significantly better)' if _t_msa == _t_msa and _t_msa > 2 else ''}")
+if _bo_det != "sceptre":
+    print(f"    SCEPTRE does NOT top the detection table: {PRETTY[_bo_det]} leads by "
+          f"{agg(_bo_det,'det','f1')[0]-agg('sceptre','det','f1')[0]:+.4f} "
+          f"(paired t = {paired_t(base, agg(_bo_det,'det','f1')[2]):+.2f}).")
+    print("    Said plainly rather than buried.")
+if agg("sceptre", "loc", "f1")[0] < agg(_bo_loc, "loc", "f1")[0]:
+    print(f"  * LOCALIZATION. SCEPTRE does NOT lead either: {PRETTY[_bo_loc]} reaches "
+          f"{agg(_bo_loc,'loc','f1')[0]:.4f} vs {agg('sceptre','loc','f1')[0]:.4f}.")
+else:
+    print(f"  * LOCALIZATION. SCEPTRE leads at {agg('sceptre','loc','f1')[0]:.4f}.")
+print()
+print(textwrap.fill(
+    "  * WHY THIS TABLE IS THE WEAKEST EVIDENCE IN THE NOTEBOOK. case14 has 14 "
+    "buses and a diameter of 5, so a 3-layer message-passing stack already "
+    f"reaches {100*float((GRIDS['case14']['hop']<=3).mean()):.0f} % of the grid "
+    "(Cell 7). The receptive-field bottleneck that motivates a separator tree "
+    "simply does not bind at this size, and we should not expect SCEPTRE to win "
+    "here. The claims that discriminate are in Parts 9 and 10: stratified "
+    "performance against stealthy attackers, and transfer to bus counts the "
+    "flat models cannot even be evaluated on.", 79))
+
+
+================================================================================
+=== Notebook Cell Index 31 [code] ===
+================================================================================
+# =====================================================================
+# CELL 22 — Zero-shot transfer across bus counts
+# =====================================================================
+TRANSFER_MODELS = [m for m in MODELS if PARAM_TABLE[m][0] == PARAM_TABLE[m][1]]
+TRANSFER_TARGETS = ["case30", "case57", "case118"]
+
+
+@torch.no_grad()
+def eval_on_case(model, case):
+    """Re-bind a trained model to a DIFFERENT grid and evaluate. No training."""
+    D = DATA[case]
+    model.bind(PLANS[case], CTX[case], GRIDS[case]["n"], GRIDS[case]).eval()
+    p, pl, _ = evaluate(model, D["Xte"])
+    return (binary_metrics(D["yte"], p)["f1"],
+            binary_metrics(D["lte"].ravel(), pl.ravel())["f1"],
+            binary_metrics(D["yte"], p)["auc"])
+
+
+print("Zero-shot transfer: TRAIN on case14 -> TEST on 30 / 57 / 118 buses")
+print("(no fine-tuning, no new parameters, identical weight tensors)\n")
+hdr = (f"{'model':<22}{'case14 (train)':>16}"
+       + "".join(f"{c:>16}" for c in TRANSFER_TARGETS))
+print(hdr); print("-" * len(hdr))
+TRANSFER = defaultdict(dict)
+for m in MODELS:
+    row = [f"{agg(m,'det','f1')[0]:.4f}"]
+    if m in TRANSFER_MODELS:
+        for tgt in TRANSFER_TARGETS:
+            f1s = [eval_on_case(r["model"], tgt)[0] for r in RESULTS[m]]
+            TRANSFER[m][tgt] = (float(np.mean(f1s)), float(np.std(f1s)))
+            row.append(f"{np.mean(f1s):.4f}+/-{np.std(f1s):.3f}")
+    else:
+        for tgt in TRANSFER_TARGETS:
+            TRANSFER[m][tgt] = None
+            row.append("n/a")
+    print(f"{PRETTY[m]:<22}" + "".join(
+        f"{v:>16}" for v in row))
+print("-" * len(hdr))
+
+print(f"\n{'model':<22}" + "".join(f"{'retain @'+c[4:]:>15}" for c in TRANSFER_TARGETS))
+print("-" * 67)
+for m in TRANSFER_MODELS:
+    src = agg(m, "det", "f1")[0]
+    r = [TRANSFER[m][t][0] / max(src, 1e-9) for t in TRANSFER_TARGETS]
+    print(f"{PRETTY[m]:<22}" + "".join(f"{v*100:>14.1f}%" for v in r))
+print("-" * 67)
+
+
+================================================================================
+=== Notebook Cell Index 32 [code] ===
+================================================================================
+# =====================================================================
+# CELL 23 — FIGURE 10: the transfer result
+# =====================================================================
+fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.5))
+Ns = [GRIDS[c]["n"] for c in ["case14"] + TRANSFER_TARGETS]
+
+ax = axes[0]
+for m in TRANSFER_MODELS:
+    ys = [agg(m, "det", "f1")[0]] + [TRANSFER[m][t][0] for t in TRANSFER_TARGETS]
+    es = [agg(m, "det", "f1")[1]] + [TRANSFER[m][t][1] for t in TRANSFER_TARGETS]
+    ax.errorbar(Ns, ys, yerr=es, marker="o", capsize=3,
+                lw=2.4 if m == "sceptre" else 1.3,
+                ms=7 if m == "sceptre" else 5,
+                color=PAL["blue"] if m == "sceptre" else None,
+                label=PRETTY[m], zorder=3 if m == "sceptre" else 2)
+for m in [x for x in MODELS if x not in TRANSFER_MODELS]:
+    ax.plot([14], [agg(m, "det", "f1")[0]], "x", ms=9, color=PAL["red"], zorder=4)
+ax.plot([], [], "x", color=PAL["red"], label="flat models: undefined at other $N$")
+ax.axvline(14, color=PAL["grey"], ls=":", lw=1.2)
+ax.text(14.6, ax.get_ylim()[0] + 0.02, "trained here", fontsize=7, color=PAL["grey"])
+ax.set_xscale("log"); ax.set_xticks(Ns); ax.set_xticklabels([str(n) for n in Ns])
+ax.set_xlabel("buses in the TEST system $N$"); ax.set_ylabel("detection F1 (zero-shot)")
+ax.set_title("(a) zero-shot transfer, trained on case14 only", fontsize=9.5)
+ax.legend(fontsize=6.8)
+
+ax = axes[1]
+xp = np.arange(len(TRANSFER_TARGETS)); w = 0.8 / max(len(TRANSFER_MODELS), 1)
+for i, m in enumerate(TRANSFER_MODELS):
+    src = agg(m, "det", "f1")[0]
+    r = [TRANSFER[m][t][0] / max(src, 1e-9) * 100 for t in TRANSFER_TARGETS]
+    ax.bar(xp + (i - (len(TRANSFER_MODELS) - 1) / 2) * w, r, w, label=PRETTY[m],
+           color=PAL["blue"] if m == "sceptre" else None, edgecolor="white")
+ax.axhline(100, color=PAL["grey"], ls="--", lw=1.2)
+ax.set_xticks(xp)
+ax.set_xticklabels([f"{t}\n(N={GRIDS[t]['n']})" for t in TRANSFER_TARGETS])
+ax.set_ylabel("% of source-system F1 retained")
+ax.set_title("(b) retention under joint size + distribution shift", fontsize=9.5)
+ax.legend(fontsize=6.8)
+
+# ---- (c) the capability quadrant ----
+ax = axes[2]
+for m in MODELS:
+    inv = PARAM_TABLE[m][0] == PARAM_TABLE[m][1]
+    reach = 1.0 if m == "sceptre" else (
+        float((GRIDS["case118"]["hop"] <= BUDGET.n_layers).mean())
+        if m in ("gcn", "gat", "kan") else 1.0)
+    c_ = PAL["blue"] if m == "sceptre" else (PAL["green"] if inv else PAL["red"])
+    jitter = np.random.RandomState(hash(m) % 1000).uniform(-0.045, 0.045)
+    ax.scatter([reach], [int(inv) + jitter], s=130 if m == "sceptre" else 55,
+               color=c_, edgecolors="k", linewidths=0.5, zorder=3)
+    ax.annotate(PRETTY[m], (reach, int(inv) + jitter), fontsize=6.2,
+                xytext=(6, 4), textcoords="offset points")
+ax.axvspan(0.92, 1.18, ymin=0.70, color=PAL["blue"], alpha=0.07)
+ax.set_xlabel(f"receptive field on case118 (fraction of grid)")
+ax.set_ylabel("parameters independent of $N$")
+ax.set_yticks([0, 1]); ax.set_yticklabels(["no", "yes"])
+ax.set_xlim(-0.05, 1.25); ax.set_ylim(-0.35, 1.4)
+ax.set_title("(c) only SCEPTRE occupies the top-right", fontsize=9.5)
+
+fig.suptitle("Figure 10 -- Size generalization.\n"
+             "SCEPTRE transfers 14 -> 118 buses with identical weights; flat "
+             "sequence models are UNDEFINED at another $N$; message-passing models "
+             "keep their parameters but lose receptive field as $N$ grows.",
+             y=1.06, fontsize=10.5, fontweight="bold")
+savefig(fig, "fig10_transfer",
+        "Zero-shot transfer from case14 to case30/57/118, retention, and the "
+        "N-invariance / receptive-field capability quadrant.")
+plt.show()
+
+_sc = [TRANSFER["sceptre"][t][0] for t in TRANSFER_TARGETS]
+_n_na = len(MODELS) - len(TRANSFER_MODELS)
+print("INFERENCE:")
+print(textwrap.fill(
+    f"  * FEASIBILITY -- the categorical result. {_n_na} of the {len(MODELS)} "
+    "architectures, including the base paper's MSA3E, the ST-Transformer, S4 and "
+    "BiLSTM, CANNOT BE EVALUATED AT ALL on a different bus count: their learned "
+    "positional table has N rows. That is not a poor score, it is an undefined "
+    "one, and it is the operationally decisive property.", 79))
+print(textwrap.fill(
+    f"  * MAGNITUDE. SCEPTRE holds F1 = {_sc[0]:.3f} / {_sc[1]:.3f} / {_sc[2]:.3f} "
+    f"at N = 30 / 57 / 118 from a case14-only fit, using the identical "
+    f"{PARAM_TABLE['sceptre'][0]:,} weights.", 79))
+
+_rivals = [m for m in TRANSFER_MODELS if m != "sceptre"]
+if _rivals:
+    _ret_s = [TRANSFER["sceptre"][t][0] / agg("sceptre", "det", "f1")[0]
+              for t in TRANSFER_TARGETS]
+    _ret_r = [max(TRANSFER[m][t][0] / agg(m, "det", "f1")[0] for m in _rivals)
+              for t in TRANSFER_TARGETS]
+    _delta = [s - r for s, r in zip(_ret_s, _ret_r)]
+    print(textwrap.fill(
+        "  * RANKING among the N-invariant arms, stated as measured. Retention gap "
+        "(SCEPTRE minus the best message-passing arm) at N = 30 / 57 / 118: "
+        f"{_delta[0]:+.3f} / {_delta[1]:+.3f} / {_delta[2]:+.3f}.", 79))
+    if _delta[-1] > _delta[0]:
+        print(textwrap.fill(
+            "    The gap moves in SCEPTRE's favour as N grows, which is the "
+            "direction the receptive-field argument predicts. At this seed count "
+            "that is a TREND, not a result -- it needs 118-bus training runs and "
+            "more seeds before it can be claimed.", 79))
+    else:
+        print(textwrap.fill(
+            "    The gap does NOT widen with N here. The receptive-field argument "
+            "predicts that it should; with all models fitted only on case14 and at "
+            "this seed count, this experiment does not support the prediction. "
+            "Reported as measured.", 79))
+print(textwrap.fill(
+    "  * Every arm loses a large fraction of its source F1 under the joint "
+    "size-and-distribution shift. Zero-shot transfer here is FEASIBLE, not free, "
+    "and we do not claim otherwise.", 79))
+
+
+================================================================================
+=== Notebook Cell Index 48 [code] ===
+================================================================================
+
+# =====================================================================
+# CELL 34 — Ablation variants
+# =====================================================================
+class RSTEAblate(RSTE):
+    """RSTE with one mechanism disabled, for attribution."""
+
+    def __init__(self, d, n_sweeps, mode, n_blocks=1):
+        super().__init__(d, n_sweeps, n_blocks); self.mode = mode
+
+    def forward(self, hb, plan):
+        if self.mode == "no_separator":
+            # merge children WITHOUT the separator summary -> topology removed
+            saved = [s["sep_row"] for s in plan.up]
+            for s in plan.up:
+                s["sep_row"] = s["sep_row"][:0]
+            out = super().forward(hb, plan)
+            for s, v in zip(plan.up, saved):
+                s["sep_row"] = v
+            return out
+        return super().forward(hb, plan)
+
+
+def build_random_tree(n, seed=0):
+    """A balanced binary tree with the SAME shape but an ARBITRARY partition."""
+    rng = np.random.default_rng(seed); nodes = []
+
+    def rec(bus, depth):
+        nid = len(nodes)
+        nd = SepNode(nid, sorted(bus), depth, len(bus) <= 1); nodes.append(nd)
+        if nd.leaf: return nd
+        p = rng.permutation(bus); h = len(p) // 2
+        nd.sep = sorted(rng.choice(bus, size=min(3, len(bus)), replace=False).tolist())
+        nd.lo = rec(p[:h].tolist(), depth + 1)
+        nd.hi = rec(p[h:].tolist(), depth + 1)
+        return nd
+
+    return rec(list(range(n)), 0), nodes
+
+
+def build_degree_tree(n, edges, seed=0):
+    """Split by DEGREE order rather than by the Fiedler vector.
+
+    A principled but physics-blind ordering: it uses the graph, but not the
+    electrical strength of the connections. Isolates the spectral cut itself.
+    """
+    deg = np.zeros(n)
+    for (f, t) in edges:
+        deg[f] += 1; deg[t] += 1
+    nodes = []
+    eset = [(int(f), int(t)) for f, t in edges]
+
+    def rec(bus, depth):
+        nid = len(nodes)
+        nd = SepNode(nid, sorted(bus), depth, len(bus) <= 1); nodes.append(nd)
+        if nd.leaf: return nd
+        o = sorted(bus, key=lambda b_: (deg[b_], b_))
+        h = len(o) // 2
+        L, R = o[:h], o[h:]
+        Ls, Rs = set(L), set(R)
+        nd.sep = sorted({u for (u, v) in eset if u in Ls and v in Rs} |
+                        {v for (u, v) in eset if u in Ls and v in Rs} |
+                        {u for (u, v) in eset if u in Rs and v in Ls} |
+                        {v for (u, v) in eset if u in Rs and v in Ls})
+        nd.lo = rec(L, depth + 1); nd.hi = rec(R, depth + 1)
+        return nd
+
+    return rec(list(range(n)), 0), nodes
+
+
+_rt = build_random_tree(GRIDS[BENCH_CASE]["n"], seed=5)
+RANDOM_PLAN = TreePlan(_rt[0], _rt[1], GRIDS[BENCH_CASE]["n"], DEVICE)
+_dt = build_degree_tree(GRIDS[BENCH_CASE]["n"], GRIDS[BENCH_CASE]["edges"])
+DEGREE_PLAN = TreePlan(_dt[0], _dt[1], GRIDS[BENCH_CASE]["n"], DEVICE)
+
+ABL = [
+    ("full SCEPTRE",            dict(sweeps=2, mode=None,           plan="nd")),
+    ("0 top-down sweeps",       dict(sweeps=0, mode=None,           plan="nd")),
+    ("1 top-down sweep",        dict(sweeps=1, mode=None,           plan="nd")),
+    ("3 top-down sweeps",       dict(sweeps=3, mode=None,           plan="nd")),
+    ("no separator features",   dict(sweeps=2, mode="no_separator", plan="nd")),
+    ("degree-ordered tree",     dict(sweeps=2, mode=None,           plan="degree")),
+    ("random balanced tree",    dict(sweeps=2, mode=None,           plan="random")),
+]
+PLAN_OF = {"nd": PLANS[BENCH_CASE], "random": RANDOM_PLAN, "degree": DEGREE_PLAN}
+
+print(f"Ablating SCEPTRE's own design choices "
+      f"(case14, {len(BUDGET.ablation_seeds)} seeds each)\n")
+print(f"Tree depths -- nested dissection {PLANS[BENCH_CASE].depth}, "
+      f"degree-ordered {DEGREE_PLAN.depth}, random {RANDOM_PLAN.depth} "
+      f"(shape held comparable)\n")
+hdr = (f"{'variant':<26}{'det F1':>17}{'loc F1':>17}{'rep RMSE':>17}{'ms/batch':>11}")
+print(hdr); print("-" * len(hdr))
+ABL_RES = {}
+for name, kw in ABL:
+    f1s, lfs, rrs, lts = [], [], [], []
+    def _make(kw=kw):
+        """Build one ablation variant, fully bound. Used by both the cold path
+        and the resume path so the two initialise identically."""
+        mdl = Detector("sceptre", n_sweeps=kw["sweeps"]).to(DEVICE)
+        if kw["mode"] == "no_separator":
+            mdl.spatial = RSTEAblate(BUDGET.d_model, kw["sweeps"], "no_separator",
+                                     n_blocks=BUDGET.n_layers - 1).to(DEVICE)
+        return mdl.bind(PLAN_OF[kw["plan"]], CTX[BENCH_CASE],
+                        GRIDS[BENCH_CASE]["n"])
+
+    _key = "abl-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    for sd_ in BUDGET.ablation_seeds:
+        r = train_cached(_key, BENCH_CASE, sd_, _make)
+        f1s.append(r["det"]["f1"]); lfs.append(r["loc"]["f1"])
+        rrs.append(r["rep_rmse"]); lts.append(r["latency_ms"])
+        if DEVICE == "cuda": torch.cuda.empty_cache()
+    ABL_RES[name] = (float(np.mean(f1s)), float(np.std(f1s)),
+                     float(np.mean(lfs)), float(np.std(lfs)),
+                     float(np.mean(rrs)), float(np.std(rrs)), float(np.mean(lts)),
+                     np.array(f1s), np.array(lfs))
+    a = ABL_RES[name]
+    print(f"{name:<26}{a[0]:>10.4f}+/-{a[1]:<5.4f}{a[2]:>10.4f}+/-{a[3]:<5.4f}"
+          f"{a[4]:>10.4f}+/-{a[5]:<5.4f}{a[6]:>11.2f}")
+print("-" * len(hdr))
+
+
+================================================================================
+=== Notebook Cell Index 49 [code] ===
+================================================================================
+# =====================================================================
+# CELL 35 — FIGURE 15: ablations and measured complexity
+# =====================================================================
+fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.4))
+
+nm = list(ABL_RES)
+cl = [PAL["blue"] if n == "full SCEPTRE" else
+      (PAL["red"] if "random" in n else
+       (PAL["orange"] if ("separator" in n or "degree" in n) else PAL["grey"]))
+      for n in nm]
+
+ax = axes[0]
+vals = [ABL_RES[n][0] for n in nm]; errs = [ABL_RES[n][1] for n in nm]
+ax.barh(range(len(nm)), vals, xerr=errs, capsize=3, color=cl, edgecolor="white")
+ax.set_yticks(range(len(nm))); ax.set_yticklabels(nm, fontsize=7.5); ax.invert_yaxis()
+ax.set_xlabel("detection F1")
+ax.set_xlim(max(0, min(vals) - 0.06), min(1.0, max(vals) + 0.03))
+ax.set_title("(a) component ablation -- detection", fontsize=9.5)
+
+ax = axes[1]
+vals2 = [ABL_RES[n][2] for n in nm]; errs2 = [ABL_RES[n][3] for n in nm]
+ax.barh(range(len(nm)), vals2, xerr=errs2, capsize=3, color=cl, edgecolor="white")
+ax.set_yticks(range(len(nm))); ax.set_yticklabels(nm, fontsize=7.5); ax.invert_yaxis()
+ax.set_xlabel("localization F1")
+ax.set_xlim(max(0, min(vals2) - 0.06), min(1.0, max(vals2) + 0.03))
+ax.set_title("(b) component ablation -- localization", fontsize=9.5)
+
+ax = axes[2]
+for m, col in zip(["sceptre", "transformer", "gcn"],
+                  [PAL["blue"], PAL["orange"], PAL["green"]]):
+    xs, ys = [], []
+    for c in CASES:
+        mdl = Detector(m).to(DEVICE).bind(PLANS[c], CTX[c], GRIDS[c]["n"], GRIDS[c]).eval()
+        xb = to_t(DATA[c]["Xte"][:128])
+        with torch.no_grad(), torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=USE_AMP):
+            for _ in range(4): mdl(xb)
+            if DEVICE == "cuda": torch.cuda.synchronize()
+            t1 = time.time()
+            for _ in range(20): mdl(xb)
+            if DEVICE == "cuda": torch.cuda.synchronize()
+        xs.append(GRIDS[c]["n"]); ys.append((time.time() - t1) / 20 * 1000)
+        del mdl, xb
+        if DEVICE == "cuda": torch.cuda.empty_cache()
+    ax.plot(xs, ys, "o-", color=col, label=PRETTY[m],
+            lw=2.0 if m == "sceptre" else 1.2)
+ax.set_xscale("log"); ax.set_yscale("log")
+ax.set_xticks([14, 30, 57, 118]); ax.set_xticklabels(["14", "30", "57", "118"])
+ax.set_xlabel("buses $N$"); ax.set_ylabel("inference latency (ms / 128 windows)")
+ax.set_title("(c) measured cost scaling on RTX 5060", fontsize=9.5)
+ax.legend(fontsize=7)
+
+fig.suptitle("Figure 15 -- Ablations and measured complexity.\n"
+             "The red bar is the decisive control: a random balanced tree of the "
+             "same depth and parameter count, differing ONLY in whether the "
+             "partition respects the electrical structure.",
+             y=1.08, fontsize=10.5, fontweight="bold")
+savefig(fig, "fig15_ablation",
+        "SCEPTRE component ablations, including random and degree-ordered tree "
+        "controls, plus measured latency scaling.")
+plt.show()
+
+# ---------------------- honest attribution -----------------------------
+_full = ABL_RES["full SCEPTRE"]; _rand = ABL_RES["random balanced tree"]
+_deg = ABL_RES["degree-ordered tree"]; _nosep = ABL_RES["no separator features"]
+_t_rand = paired_t(_full[7], _rand[7])
+_t_deg = paired_t(_full[7], _deg[7])
+_t_nosep = paired_t(_full[7], _nosep[7])
+print("INFERENCE -- the attribution question, answered directly:")
+print(textwrap.fill(
+    f"  * NESTED DISSECTION vs A RANDOM HIERARCHY. Full SCEPTRE {_full[0]:.4f} F1 "
+    f"vs {_rand[0]:.4f} for a random balanced tree of the same depth and parameter "
+    f"count (paired t = {_t_rand:+.2f} over "
+    f"{len(BUDGET.ablation_seeds)} seeds).", 79))
+if _t_rand == _t_rand and _t_rand > 2:
+    print(textwrap.fill(
+        "    The gain comes from the NESTED-DISSECTION STRUCTURE specifically, not "
+        "merely from having a hierarchy. That is the answer a sceptical reader "
+        "needs, and it is the ablation that licenses the physics story.", 79))
+elif abs(_full[0] - _rand[0]) < 0.01:
+    print(textwrap.fill(
+        "    STATED PLAINLY: at this seed count the random tree performs "
+        "essentially as well. On case14 the physics-aware partition is NOT "
+        "demonstrably doing the work -- the hierarchy alone accounts for the "
+        "result. This is the ablation most likely to be challenged and we report "
+        "it as measured. The prediction is that the gap opens at larger N, where "
+        "an arbitrary partition can place electrically distant buses in the same "
+        "block; testing that needs 118-bus training runs.", 79))
+else:
+    print(textwrap.fill(
+        f"    Difference {_full[0]-_rand[0]:+.4f} F1, not resolved at this seed "
+        f"count (t = {_t_rand:+.2f}). Reported as measured; more seeds needed.", 79))
+print(textwrap.fill(
+    f"  * SEPARATOR FEATURES. Removing the mean(h_S) term costs "
+    f"{_full[0]-_nosep[0]:+.4f} F1 (t = {_t_nosep:+.2f}); the degree-ordered cut "
+    f"costs {_full[0]-_deg[0]:+.4f} (t = {_t_deg:+.2f}).", 79))
+_sw = [ABL_RES[f"{k} top-down sweep" + ("s" if k != 1 else "")][0]
+       for k in (0, 1, 3)]
+print(textwrap.fill(
+    f"  * FIXED-POINT DEPTH. K = 0 / 1 / 2 / 3 top-down sweeps give "
+    f"{_sw[0]:.4f} / {_sw[1]:.4f} / {_full[0]:.4f} / {_sw[2]:.4f} F1. "
+    + ("The iteration is doing real work."
+       if _full[0] > max(_sw[0], _sw[1]) + 0.005 else
+       "The iteration is NOT clearly paying for itself here; K = 1 would be the "
+       "cheaper default on this system."), 79))
+

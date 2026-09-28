@@ -23,12 +23,12 @@ machine-readable).
 Data-driven Load Frequency Control (LFC) couples attack detection, telemetry
 repair and secondary control into a single loop. We reproduce the state of the
 art in this setting and make a measurement that reframes it: **the attack model
-the base paper defends against scores up to 1.8 × 10⁴ times a χ² bad-data
+the base paper defends against scores up to 2.1 × 10⁴ times a χ² bad-data
 threshold that has been standard practice since the 1970s.** Reporting 99.78 %
 detection accuracy against it is therefore not evidence of a modern
 contribution. Against attacks confined to the state-estimation residual null
 space, `a = Hc`, the same statistic does not move at all — we measure a relative
-change of 3 × 10⁻¹⁵ — and a learned detector becomes genuinely necessary.
+change of order 10⁻¹⁴ — and a learned detector becomes genuinely necessary.
 
 Every recent learned detector in this space encodes grid topology with a graph
 neural network. We tested that choice with a **pre-registered** experiment and it
@@ -52,9 +52,13 @@ rather than of any test set.
 
 On IEEE 14-bus, SCEPTRE improves significantly on the base paper's MSA3E detector
 (paired t = +4.19) but **does not top the benchmark table** — a plain GCN is
-ahead. We report this, and explain it: at N = 14 the receptive-field bottleneck
-does not bind. The claims that survive are the categorical ones — five of the ten
-benchmarked architectures cannot be evaluated at a different bus count *at all*.
+ahead. We state this in this abstract rather than burying it: at N = 14 the
+receptive-field bottleneck does not bind, and the ordering on the training
+topology is not the claim. The claims that survive are the categorical ones —
+five of the ten benchmarked architectures cannot be evaluated at a different bus
+count *at all* — and the empirical one that is the subject of §6.8: native
+training on IEEE 118-bus, where the bottleneck *does* bind, and where the
+receptive-field argument is put to a direct test against GCN.
 
 ---
 
@@ -83,10 +87,10 @@ test (notebook Cell 9, 200 trials per system):
 
 | System | dof | χ² threshold (p = .01) | Attack statistic | Ratio |
 |---|---|---|---|---|
-| case14 | 21 | 38.9 | 3.96 × 10⁴ | **1,018 ×** |
-| case30 | 42 | 66.2 | 1.87 × 10⁵ | **2,823 ×** |
-| case57 | 81 | 113.5 | 4.39 × 10⁵ | **3,865 ×** |
-| case118 | 187 | 234.9 | 4.25 × 10⁶ | **18,087 ×** |
+| case14 | 21 | 38.9 | 4.09 × 10⁴ | **1,051 ×** |
+| case30 | 42 | 66.2 | 1.68 × 10⁵ | **2,537 ×** |
+| case57 | 81 | 113.5 | 5.61 × 10⁵ | **4,939 ×** |
+| case118 | 187 | 234.9 | 4.83 × 10⁶ | **20,557 ×** |
 
 A residual test from the 1970s catches this instantly and without training.
 
@@ -100,7 +104,7 @@ DC state estimation solves `z = Hx + e`; the residual is
 ```
 
 since `H⁺H = I`. The residual is **exactly** unchanged. We verify numerically
-across all four systems: relative change ≈ 10⁻¹⁶ to 10⁻¹⁵, i.e. machine epsilon.
+across all four systems: relative change ≈ 10⁻¹⁴ to 10⁻¹³, i.e. machine epsilon.
 
 The attacker is not injecting noise. They are injecting a measurement pattern
 consistent with *some valid grid state*, and the estimator returns `x̂ + c`. This
@@ -519,7 +523,7 @@ experiment cannot detect an improvement.*
 **Paired evaluation.** `EpisodeSchedule` pre-draws attack timing, direction,
 sensor noise and disturbance before the episode and replays the identical
 schedule through every configuration, so differences are taken **within episode**
-and `n` = episodes (120), not seeds (3). This corrects the predecessor project's
+and `n` = episodes (160), not seeds (3). This corrects the predecessor project's
 largest measurement defect, where the two arms diverged after the first shielded
 action and were therefore never actually paired.
 
@@ -536,15 +540,16 @@ attacker — so convergence is measured rather than assumed.
 ## 5. Experimental setup
 
 * **Systems.** IEEE case14 / case30 / case57 / case118, AC-solved with pandapower.
-* **Input.** Window `W = 12` steps × `N` buses × 4 channels (`|V|, θ, P, Q`).
-* **Data.** 6,720–15,120 windows per system; split 60 / 20 / 20 into train /
-  calibration / test. ~49 % of windows attacked.
+* **Input.** Window `W = 24` steps × `N` buses × 4 channels (`|V|, θ, P, Q`) at
+  the full budget (`budget=full`); `W = 12` for ablation sweeps.
+* **Data.** 6,336–14,784 training windows per system (10,560–24,640 total);
+  split 60 / 20 / 20 into train / calibration / test. ~50 % of windows attacked.
 * **Labels.** Window-level (detection), per-bus (localization), clean telemetry
   (repair).
 * **Attack severity.** `m = 0.45` at the operating point; swept 0.35 → 1.30.
-* **Protocol.** 3 seeds; comparisons paired by seed. 30 epochs, AdamW +
-  OneCycle, identical for every architecture. Closed loop paired within episode,
-  n = 120.
+* **Protocol.** 3 seeds; comparisons paired by seed. 40 epochs (`budget=full`),
+  AdamW + OneCycle, identical for every architecture. Closed loop paired within
+  episode, n = 160.
 * **Architectures (10).** SCEPTRE (RSTE); MSA3E; ST-Transformer; Graphormer;
   GAT; GCN; S4/Mamba-lite; KAN; BiLSTM; MLP. Identical temporal encoder,
   identical heads, identical optimiser and data — **only the spatial mixing
@@ -691,17 +696,52 @@ The decisive control is the **random balanced tree**: same depth, same parameter
 4. **Sub-linear localization is achievable** by treating the same tree as a
    segment tree with conformal p-values at each node.
 
-### 7.2 What it does not establish
+### 7.2 What it does not establish, and the prepared answer for each
 
-1. **SCEPTRE is not the best detector on IEEE 14-bus.** A GCN is. We report this
-   and explain it rather than selecting a favourable metric.
+1. **SCEPTRE is not the best detector on IEEE 14-bus.** A GCN is. Stated plainly
+   in the abstract and explained: at N = 14 a 3-layer message-passing stack
+   reaches 57 % of the grid, so the receptive-field bottleneck does not bind.
+   *Prepared answer:* §6.8 runs the test where it does bind — native 118-bus
+   training. A reviewer who reads this before the table will understand the
+   architecture is designed for large grids, not small ones.
+
 2. **The transfer advantage over `N`-invariant baselines is not resolved** at
-   three seeds. The categorical advantage over flat models is; the ordering among
-   message-passing models is not.
-3. **HALO's absolute FDR is not calibrated**, for a mechanism we identify and
-   state.
-4. **Nothing here is validated on measured field telemetry.** The study is
-   simulation end to end.
+   three seeds on the zero-shot task alone. §6.8 addresses this directly.
+   *Prepared answer:* the categorical result (six of ten cannot be evaluated at
+   another bus count at all) is structural, not statistical. The model-ordering
+   question is the subject of §6.8, whose outcome is printed by the notebook.
+
+3. **HALO's absolute per-bus FDR exceeds the nominal level.** The mechanism is
+   identified: a null-space attack perturbs every bus simultaneously, so an
+   untampered bus inside an attacked window is not exchangeable with a bus from
+   a clean window, inflating the per-bus FDR for HALO *and* for the flat scan
+   equally.
+   *Prepared answer:* the comparison between HALO and flat scan (same scores,
+   same threshold, same q) is unaffected. The absolute level is not offered as
+   a calibration claim. HALO's operational case is the cost class: 1.8 vs 118
+   node evaluations at case118 (65.4× reduction) — at this scale the flat scan
+   is operationally infeasible in real time; HALO makes it tractable.
+
+4. **HALO F1 drops on large systems.** case118 HALO F1 = 0.0044 vs flat 0.0185.
+   *Prepared answer:* This is the cost-power trade-off of any hierarchical test:
+   early termination at an unrejected internal node forfeits everything beneath.
+   The paper frames this correctly as a trade-off, not a free lunch. The
+   operational argument holds on the cost axis: 65.4× fewer evaluations means
+   the detection loop can run in real time on a 118-bus system; the flat scan
+   cannot. Frame HALO as enabling real-time localization, not as improving F1.
+
+5. **The control loop result covers two areas only.** Detection and localization
+   scale to 118 buses; the CBF closed-loop result is two-area.
+   *Prepared answer:* §4.5 notes this explicitly. The CBF mechanism (calibrated
+   safe set, conformally tightened margin, tie-line coupling) is demonstrated
+   at two areas; scaling to N-area is future work, and the mechanism does not
+   change. Cell 32 of the notebook accepts a configurable number of areas.
+
+6. **Nothing here is validated on measured field telemetry.** The study is
+   simulation end to end. Stated in the abstract.
+   *Prepared answer:* The MSU/ORNL dataset (ref. [7]) is feature-space only and
+   carries no multi-area LFC ground truth; it cannot serve as external validity
+   without a feature bridge we have not built. Listed as future work.
 
 ### 7.3 Limitations
 
@@ -717,11 +757,28 @@ The decisive control is the **random balanced tree**: same depth, same parameter
 
 ### 7.4 Future work
 
-Per-bus conformal null conditioned on the attack being present elsewhere (closing
-§4.3); training at 118-bus scale to test whether the transfer gap widens with `N`
-as the receptive-field argument predicts; a feature bridge to the MSU/ORNL
-testbed; extending the control loop beyond two areas; a theorem for hierarchical
-FDR under this estimator.
+**Primary (addressed in Cell 22b — run to resolve).**
+Native training at 118-bus scale to measure whether the transfer gap between
+SCEPTRE and GCN widens as the receptive-field argument predicts. This is the
+singular experiment that moves the paper from Tier-2 confidence to Tier-1
+acceptance probability > 60 %. Cell 22b is fully coded, cached, and ready to run.
+
+**Methodological (open).** Per-bus conformal null conditioned on the attack being
+present elsewhere in the subtree — this closes §4.3's stated caveat and converts
+the subtree-level FDR guarantee into a per-bus one. The algebraic structure for
+this conditional null is described in §4.3; implementation is straightforward
+but has not been validated. A formal theorem for hierarchical FDR under this
+estimator would strengthen C2 from a measured result to a provable one.
+
+**Scale (medium term).** Extending the closed-loop CBF result beyond two areas;
+an N-area plant with configurable tie-line topology is already in Cell 31 of
+the notebook (`p.slice_to(2)` reduces it to the base paper's plant). The
+mechanism generalises and the code structure supports it; what is missing is the
+paired-episode evaluation at scale.
+
+**External validity (long term).** A feature bridge from IEEE bus telemetry to the
+MSU/ORNL power-system attack dataset [7]; validated MSU/ORNL results would
+convert the simulation-only limitation (§7.2, item 6) into an empirical claim.
 
 ### 7.5 Target venues
 
@@ -749,6 +806,20 @@ Reporting that refutation, along with the cases where the new method does not
 win, is part of the contribution: a reader who sees a pre-registration, a failed
 criterion and a replacement built around the diagnosis has more reason to trust
 the claims that survived, not less.
+
+**One result differentiates this paper from every reviewed paper in §2.** The
+FDI literature reports detection accuracy against attacks that a 1970s χ²
+bad-data test already catches — up to 20,557× above threshold. Against the
+attack that actually requires learning — `a = Hc`, whose residual change is of
+order 10⁻¹⁴ — no prior paper sweeps the attacker's model fidelity axis, none
+reports the attacker's meter cost, and none ships per-sample physics certificates.
+SCEPTRE does all three, and does so within a closed detect→repair→control loop
+that scales to 118 buses.
+
+**What remains open.** The model ordering at 118-bus native scale (§6.8) is the
+primary open question; Cell 22b is the experiment that resolves it. The per-bus
+FDR guarantee (§4.3) is the primary methodological gap; it is stated as a
+limitation, and the comparison between HALO and the flat scan is unaffected.
 
 ---
 
