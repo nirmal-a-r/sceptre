@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+title: >-
+  Oracle-Referenced, Audited Benchmark for Stealthy False-Data Injection in
+  Power-System State Estimation and Load-Frequency Control (pilot)
+message: Simulation pilot; please cite the repository and state that results are synthetic.
+type: software
+authors:
+  - name: Project authors
+license: MIT
+version: 0.1.0
+date-released: '2026-10-19'
+keywords:
+  - false data injection
+  - state estimation
+  - load frequency control
+  - Neyman-Pearson oracle
+  - benchmark audit
+abstract: >-
+  A notebook that builds a randomized power-grid benchmark from scratch, measures every
+  detector against a hardness-indexed Neyman-Pearson oracle, audits the benchmark for
+  shortcuts (including the SCEPTRE dataset), and converts detection into frequency damage.
