@@ -1,0 +1,33 @@
+# FDI oracle-benchmark -- environment contract (adapted from SCEPTRE's requirements.txt)
+#
+# Parts 1-16 run on the CPU-only scientific stack. Parts 17-20 add SimBench (real yearly load/DER profiles) and PyTorch
+# (deep detectors, normalizing flow, gradient attacker). PyTorch uses CUDA automatically when it is installed with GPU support
+# and falls back to the CPU otherwise; the notebook prints which device it chose. The SCEPTRE original (Windows 11, RTX 5060,
+# CUDA 12.8 PyTorch) is kept in reference/sceptre/requirements_sceptre_original.txt.
+
+# --- core numerics -----------------------------------------------------
+numpy>=2.0               # np.trapezoid is used (np.trapz was removed in 2.x)
+scipy>=1.13
+pandas>=2.2
+
+# --- power system ------------------------------------------------------
+pandapower>=3.0          # IEEE case14/30/57 data and the reference power flow used for validation
+networkx>=3.3            # graph connectivity, spanning trees, Kernighan-Lin area split
+numba>=0.60              # optional: speeds up pandapower; the notebook sets numba=False and does not need it
+
+# --- machine learning --------------------------------------------------
+scikit-learn>=1.5
+
+# --- figures and notebook ---------------------------------------------
+matplotlib>=3.9
+jupyterlab>=4.2
+ipykernel>=6.29
+nbformat>=5.10
+nbclient>=0.10           # headless execution: python -m nbclient / jupyter nbconvert --execute
+
+# --- realistic data and deep learning (Parts 17-20) ---------------------
+simbench>=1.6            # yearly 15-minute load and DER profiles for the environment zoo (works offline once installed)
+torch>=2.4               # CPU is enough; for an RTX 50-series GPU install a CUDA 12.8+ build FIRST:
+                         #   pip install torch --index-url https://download.pytorch.org/whl/cu128
+joblib>=1.3
+nbconvert>=7.0         # used by run_v5.ps1 (jupyter nbconvert --execute)
